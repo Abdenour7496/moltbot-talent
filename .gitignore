@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.js.map
+*.d.ts.map
+
+# Compiled JS from TS sources (keep .ts, ignore compiled .js siblings)
+gui/api/src/**/*.js
+gui/api/src/**/*.d.ts
+gui/web/vite.config.js
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Vite cache
+.vite/

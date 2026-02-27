@@ -1,0 +1,36 @@
+{
+  "name": "@moltbot-talent/servicenow",
+  "version": "0.1.0",
+  "description": "ServiceNow integration for Moltbot Talent",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "moltbot": ">=2025.1.0"
+  },
+  "moltbot": {
+    "type": "extension",
+    "category": "integration",
+    "tools": [
+      "servicenow_create_incident",
+      "servicenow_update_incident",
+      "servicenow_query",
+      "servicenow_create_change"
+    ]
+  }
+}

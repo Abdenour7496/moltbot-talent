@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: var(--color-zinc-950);
+  --color-foreground: var(--color-zinc-100);
+  --color-muted: var(--color-zinc-400);
+  --color-muted-foreground: var(--color-zinc-500);
+  --color-card: var(--color-zinc-900);
+  --color-card-foreground: var(--color-zinc-100);
+  --color-border: var(--color-zinc-800);
+  --color-input: var(--color-zinc-900);
+  --color-hover: var(--color-zinc-800);
+  --color-sidebar: #131316;
+  --color-code: var(--color-zinc-800);
+  --color-accent: var(--color-blue-500);
+  --color-accent-foreground: var(--color-white);
+  --color-destructive: var(--color-red-500);
+  --color-success: var(--color-emerald-500);
+  --color-warning: var(--color-amber-500);
+}
+
+/* ── Light theme overrides ────────────────────────────────────── */
+:root:not(.dark) {
+  --color-background: #ffffff;
+  --color-foreground: #18181b;
+  --color-muted: #71717a;
+  --color-muted-foreground: #a1a1aa;
+  --color-card: #ffffff;
+  --color-card-foreground: #18181b;
+  --color-border: #e4e4e7;
+  --color-input: #f4f4f5;
+  --color-hover: #f4f4f5;
+  --color-sidebar: #f9fafb;
+  --color-code: #f4f4f5;
+  --color-accent: #3b82f6;
+  --color-accent-foreground: #ffffff;
+  --color-destructive: #ef4444;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-card);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}

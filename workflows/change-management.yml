@@ -1,0 +1,197 @@
+# Multi-Agent Change Management Workflow
+#
+# Inspired by the Antfarm project (https://github.com/snarktank/antfarm)
+# Adapted for Moltbot Talent enterprise change management.
+
+id: change-management
+name: Change Management Pipeline
+version: 1
+description: |
+  Enterprise change management pipeline combining IT Ops coordination
+  with multi-agent development workflow. IT Ops manages the change request,
+  developer implements, reviewer validates, and IT Ops handles deployment.
+  Every step follows deterministic verification with retry and escalation.
+
+agents:
+  - id: it-ops
+    name: IT Operations Specialist
+    role: analysis
+    description: Manages change requests, pre-checks, and deployment coordination.
+    persona: it-ops-specialist
+
+  - id: developer
+    name: Developer
+    role: coding
+    description: Implements the change with tests.
+
+  - id: reviewer
+    name: Code Reviewer
+    role: analysis
+    description: Reviews the change for quality and risk.
+    persona: code-reviewer
+
+  - id: security
+    name: Security Auditor
+    role: scanning
+    description: Quick security scan of the change.
+    persona: security-auditor
+
+steps:
+  - id: plan
+    agent: it-ops
+    input: |
+      Plan and prepare a change request for the following task.
+
+      CHANGE REQUEST:
+      {{task}}
+
+      Instructions:
+      1. Assess the change — what is being changed, why, and what's the risk
+      2. Classify the change type: Standard | Normal | Emergency
+      3. Identify impacted services and dependencies
+      4. Define the rollback plan
+      5. Determine the maintenance window
+      6. Create the pre-deployment checklist
+
+      Reply with:
+      STATUS: done
+      CHANGE_TYPE: Standard|Normal|Emergency
+      RISK_LEVEL: Low|Medium|High
+      IMPACTED_SERVICES: list of affected services
+      ROLLBACK_PLAN: how to undo the change
+      MAINTENANCE_WINDOW: recommended window
+      PRE_CHECKS: checklist of pre-deployment verifications
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: implement
+    agent: developer
+    input: |
+      Implement the following change.
+
+      CHANGE REQUEST:
+      {{task}}
+
+      CHANGE_TYPE: {{change_type}}
+      RISK_LEVEL: {{risk_level}}
+      IMPACTED_SERVICES: {{impacted_services}}
+
+      VERIFY FEEDBACK (if retrying):
+      {{verify_feedback}}
+
+      Instructions:
+      1. Create a feature branch
+      2. Implement the change
+      3. Write tests for the change
+      4. Run build and tests to confirm everything passes
+      5. Commit with clear message
+
+      Reply with:
+      STATUS: done
+      CHANGES: what was implemented
+      TESTS: what tests were written
+      BRANCH: branch name
+      BUILD_STATUS: pass/fail
+      TEST_STATUS: pass/fail
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: security-scan
+    agent: security
+    input: |
+      Quick security scan of the change.
+
+      CHANGES: {{changes}}
+      BRANCH: {{branch}}
+      IMPACTED_SERVICES: {{impacted_services}}
+
+      Instructions:
+      1. Review the diff for security implications
+      2. Check for new dependencies with known vulnerabilities
+      3. Verify no secrets or credentials in the change
+      4. Check auth/access control changes
+      5. Flag any security concerns
+
+      Reply with:
+      STATUS: done
+      SECURITY_CLEAR: true|false
+      SECURITY_NOTES: findings or "No security concerns"
+    expects: "STATUS: done"
+    max_retries: 1
+    on_fail:
+      escalate_to: human
+
+  - id: review
+    agent: reviewer
+    input: |
+      Review the change for quality and risk.
+
+      CHANGE REQUEST:
+      {{task}}
+
+      CHANGES: {{changes}}
+      BRANCH: {{branch}}
+      RISK_LEVEL: {{risk_level}}
+      SECURITY_CLEAR: {{security_clear}}
+      SECURITY_NOTES: {{security_notes}}
+
+      Review for:
+      - Code quality and correctness
+      - Test coverage
+      - Risk assessment accuracy
+      - Follows project conventions
+      - Rollback safety
+
+      Reply with:
+      STATUS: done
+      DECISION: approved
+
+      Or if changes needed:
+      STATUS: retry
+      DECISION: changes_requested
+      FEEDBACK: what needs to change
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
+
+  - id: deploy
+    agent: it-ops
+    input: |
+      Coordinate deployment of the approved change.
+
+      CHANGE REQUEST:
+      {{task}}
+
+      CHANGE_TYPE: {{change_type}}
+      RISK_LEVEL: {{risk_level}}
+      BRANCH: {{branch}}
+      CHANGES: {{changes}}
+      ROLLBACK_PLAN: {{rollback_plan}}
+      MAINTENANCE_WINDOW: {{maintenance_window}}
+      PRE_CHECKS: {{pre_checks}}
+      SECURITY_CLEAR: {{security_clear}}
+
+      Instructions:
+      1. Execute pre-deployment checklist
+      2. Notify stakeholders
+      3. Prepare deployment commands
+      4. Monitor deployment
+      5. Run post-deployment verification
+      6. Update change ticket
+
+      Reply with:
+      STATUS: done
+      DEPLOYMENT_STATUS: success|failed
+      POST_CHECKS: results of post-deployment verification
+      NOTES: any observations or follow-up items
+    expects: "STATUS: done"
+    max_retries: 1
+    on_fail:
+      escalate_to: human

@@ -1,0 +1,44 @@
+{
+  "name": "moltbot-talent",
+  "version": "0.1.0",
+  "description": "AI Virtual Talent extension for Moltbot - Transform AI assistants into domain-expert digital employees",
+  "license": "MIT",
+  "author": "Moltbot Community",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moltbot/moltbot-talent.git"
+  },
+  "keywords": [
+    "moltbot",
+    "ai-assistant",
+    "virtual-talent",
+    "rag",
+    "enterprise-ai",
+    "domain-expert"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "dev:gui": "pnpm --filter gui-api --filter gui-web --parallel dev",
+    "dev:api": "pnpm --filter gui-api dev",
+    "dev:web": "pnpm --filter gui-web dev",
+    "lint": "oxlint .",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "oxlint": "^0.5.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "moltbot": "0.1.0"
+    }
+  }
+}

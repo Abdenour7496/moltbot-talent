@@ -1,0 +1,210 @@
+# Multi-Agent Workflow Definitions
+#
+# Inspired by the Antfarm project (https://github.com/snarktank/antfarm)
+# Adapted for Moltbot Talent enterprise workflows.
+#
+# Each workflow defines:
+#   - agents: The personas involved and their roles
+#   - steps: Ordered pipeline steps with handoffs, verification loops, and retry logic
+#   - Template variables: Steps communicate via KEY: value pairs in their output
+
+id: incident-response
+name: Incident Response Pipeline
+version: 1
+description: |
+  Multi-agent incident response pipeline. IT Ops triages and diagnoses.
+  Bug Triager investigates root cause. Developer fixes with regression tests.
+  Verifier confirms the fix. IT Ops coordinates the deployment.
+
+agents:
+  - id: it-ops
+    name: IT Operations Specialist
+    role: analysis
+    description: Triages incidents, assesses impact, coordinates response.
+    persona: it-ops-specialist
+
+  - id: triager
+    name: Bug Triager
+    role: analysis
+    description: Investigates root cause and traces the issue through code.
+    persona: bug-triager
+
+  - id: developer
+    name: Developer
+    role: coding
+    description: Implements fixes and writes regression tests.
+
+  - id: verifier
+    name: Verifier
+    role: verification
+    description: Verifies fixes are correct and regression tests pass.
+
+  - id: reviewer
+    name: Code Reviewer
+    role: analysis
+    description: Reviews the fix PR for quality and correctness.
+    persona: code-reviewer
+
+steps:
+  - id: triage
+    agent: it-ops
+    input: |
+      Triage the following incident. Assess severity, identify blast radius, and gather initial diagnostics.
+
+      INCIDENT:
+      {{task}}
+
+      Instructions:
+      1. Assess impact — who is affected, how severely
+      2. Classify severity (SEV-1 through SEV-4)
+      3. Check monitoring dashboards for correlated signals
+      4. Identify the affected service/component
+      5. Check recent deployments and config changes
+      6. Document findings
+
+      Reply with:
+      STATUS: done
+      SEVERITY: SEV-1|SEV-2|SEV-3|SEV-4
+      AFFECTED_SERVICE: service name
+      AFFECTED_AREA: files/modules affected
+      BLAST_RADIUS: who and what is impacted
+      RECENT_CHANGES: relevant recent deployments or config changes
+      INITIAL_DIAGNOSIS: what you think is happening
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: investigate
+    agent: triager
+    input: |
+      Investigate the root cause of this incident.
+
+      INCIDENT:
+      {{task}}
+
+      SEVERITY: {{severity}}
+      AFFECTED_SERVICE: {{affected_service}}
+      AFFECTED_AREA: {{affected_area}}
+      INITIAL_DIAGNOSIS: {{initial_diagnosis}}
+      RECENT_CHANGES: {{recent_changes}}
+
+      Instructions:
+      1. Explore the codebase in the affected area
+      2. Trace the issue from symptoms to root cause
+      3. Check recent commits for introducing changes
+      4. Document the exact root cause
+      5. Propose a fix approach
+
+      Reply with:
+      STATUS: done
+      ROOT_CAUSE: detailed explanation of what's wrong
+      INTRODUCING_CHANGE: commit or change that caused this (if identified)
+      FIX_APPROACH: what needs to change and where
+      ACCEPTANCE_CRITERIA: criteria for verifying the fix
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: fix
+    agent: developer
+    input: |
+      Implement a fix for this incident.
+
+      INCIDENT:
+      {{task}}
+
+      SEVERITY: {{severity}}
+      AFFECTED_AREA: {{affected_area}}
+      ROOT_CAUSE: {{root_cause}}
+      FIX_APPROACH: {{fix_approach}}
+
+      VERIFY FEEDBACK (if retrying):
+      {{verify_feedback}}
+
+      Instructions:
+      1. Implement the fix based on the root cause and fix approach
+      2. Write a regression test that would have caught this issue
+      3. Run build and tests to verify nothing is broken
+      4. Commit with a clear message: fix: brief description
+
+      Reply with:
+      STATUS: done
+      CHANGES: what was changed
+      REGRESSION_TEST: what test was added
+      BRANCH: branch name
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: verify
+    agent: verifier
+    input: |
+      Verify the fix is correct and complete.
+
+      INCIDENT:
+      {{task}}
+
+      ROOT_CAUSE: {{root_cause}}
+      CHANGES: {{changes}}
+      REGRESSION_TEST: {{regression_test}}
+      ACCEPTANCE_CRITERIA: {{acceptance_criteria}}
+
+      Instructions:
+      1. Run the full test suite
+      2. Verify the regression test covers the right scenario
+      3. Confirm the fix addresses the root cause, not just symptoms
+      4. Check for unintended side effects
+      5. Verify the regression test would fail without the fix
+
+      Reply with:
+      STATUS: done
+      VERIFIED: what was confirmed
+
+      Or if issues found:
+      STATUS: retry
+      ISSUES: what's wrong or incomplete
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: fix
+      max_retries: 3
+      on_exhausted:
+        escalate_to: human
+
+  - id: review
+    agent: reviewer
+    input: |
+      Review the fix for this incident.
+
+      INCIDENT:
+      {{task}}
+
+      SEVERITY: {{severity}}
+      ROOT_CAUSE: {{root_cause}}
+      CHANGES: {{changes}}
+      BRANCH: {{branch}}
+      VERIFIED: {{verified}}
+
+      Review for:
+      - Code quality and correctness
+      - Fix addresses root cause
+      - Regression test quality
+      - No unintended side effects
+      - Follows project conventions
+
+      Reply with:
+      STATUS: done
+      DECISION: approved
+
+      Or if changes needed:
+      STATUS: retry
+      DECISION: changes_requested
+      FEEDBACK: what needs to change
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: fix
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
