@@ -39,7 +39,8 @@ export function WebChatPage() {
 
   // Connect to WebSocket
   useEffect(() => {
-    const wsUrl = `ws://${window.location.hostname}:3001/ws`;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
