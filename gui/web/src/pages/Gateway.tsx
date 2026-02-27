@@ -46,7 +46,8 @@ export function GatewayPage() {
   // Probe WS availability
   useEffect(() => {
     try {
-      const ws = new WebSocket(`ws://${window.location.hostname}:3001/ws`);
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
       ws.onopen = () => {
         setWsConnected(true);
         ws.close();
@@ -154,7 +155,7 @@ export function GatewayPage() {
         <CardContent className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-muted">Endpoint</span>
-            <span className="font-mono">ws://{window.location.hostname}:3001/ws</span>
+            <span className="font-mono">{window.location.protocol === 'https:' ? 'wss' : 'ws'}://{window.location.host}/ws</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted">Heartbeat Interval</span>
