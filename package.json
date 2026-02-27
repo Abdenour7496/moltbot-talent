@@ -28,7 +28,7 @@
     "dev:web": "pnpm --filter gui-web dev",
     "lint": "oxlint .",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && pnpm --filter gui-api exec tsc --noEmit && pnpm --filter @moltbot-talent/knowledge exec tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

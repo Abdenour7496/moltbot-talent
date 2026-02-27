@@ -13,8 +13,5 @@
     "sourceMap": true,
     "resolveJsonModule": true
   },
-  "exclude": ["gui/web"],
-  "references": [
-    { "path": "./packages/knowledge" }
-  ]
+  "exclude": ["gui/web", "gui/api", "packages", "examples"]
 }

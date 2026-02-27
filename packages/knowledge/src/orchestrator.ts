@@ -158,6 +158,7 @@ export class TalentOrchestrator {
     
     this.log({
       action: 'persona_loaded',
+      outcome: 'success',
       details: { personaId: config.id, name: config.name },
     });
 
@@ -175,6 +176,7 @@ export class TalentOrchestrator {
     
     this.log({
       action: 'persona_activated',
+      outcome: 'success',
       details: { personaId },
     });
   }
@@ -427,6 +429,7 @@ export class TalentOrchestrator {
     this.workflows.set(def.id, def);
     this.log({
       action: 'workflow_loaded',
+      outcome: 'success',
       details: { workflowId: def.id, name: def.name, steps: def.steps.length },
     });
     return def;
@@ -442,6 +445,7 @@ export class TalentOrchestrator {
     }
     this.log({
       action: 'workflows_loaded',
+      outcome: 'success',
       details: { directory: dir, count: loaded.size },
     });
     return loaded.size;
@@ -503,6 +507,7 @@ export class TalentOrchestrator {
 
     this.log({
       action: 'workflow_started',
+      outcome: 'pending',
       details: { workflowId, task: task.slice(0, 200) },
     });
 
