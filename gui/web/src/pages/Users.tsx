@@ -89,19 +89,31 @@ export function UsersPage() {
   };
 
   const handleRoleChange = async (id: string, role: string) => {
-    const updated = await api.updateUser(id, { role });
-    setUserList((prev) => prev.map((u) => (u.id === id ? updated : u)));
+    try {
+      const updated = await api.updateUser(id, { role });
+      setUserList((prev) => prev.map((u) => (u.id === id ? updated : u)));
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to update role');
+    }
   };
 
   const handleToggleActive = async (id: string, active: boolean) => {
-    const updated = await api.updateUser(id, { active });
-    setUserList((prev) => prev.map((u) => (u.id === id ? updated : u)));
+    try {
+      const updated = await api.updateUser(id, { active });
+      setUserList((prev) => prev.map((u) => (u.id === id ? updated : u)));
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to update user status');
+    }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
-    await api.deleteUser(id);
-    setUserList((prev) => prev.filter((u) => u.id !== id));
+    try {
+      await api.deleteUser(id);
+      setUserList((prev) => prev.filter((u) => u.id !== id));
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to delete user');
+    }
   };
 
   if (loading) {
@@ -114,6 +126,12 @@ export function UsersPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="ml-4 text-xs underline">Dismiss</button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

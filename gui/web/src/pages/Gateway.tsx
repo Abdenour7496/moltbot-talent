@@ -13,11 +13,13 @@ import {
   WifiOff,
   Server,
   MessageSquare,
+  Tag,
 } from 'lucide-react';
 
 interface GatewayStatus {
   totalClients: number;
   uptime: number;
+  version: string;
   clients: { id: string; clientType: string; connectedAt: string }[];
 }
 
@@ -117,7 +119,15 @@ export function GatewayPage() {
             </div>
           </CardContent>
         </Card>
-
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <Tag className="h-8 w-8 text-purple-400" />
+            <div>
+              <p className="text-sm text-muted">Version</p>
+              <p className="text-xl font-bold">{status?.version ?? '—'}</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Connected Clients */}
