@@ -80,6 +80,7 @@ export function ContractsPage() {
   const [rating, setRating] = useState(5);
   const [feedback, setFeedback] = useState('');
   const [hoursInput, setHoursInput] = useState<Record<string, number>>({});
+  const [actionError, setActionError] = useState('');
 
   const load = () => {
     const qs = statusFilter ? `?status=${statusFilter}` : '';
@@ -90,40 +91,64 @@ export function ContractsPage() {
 
   const sendMessage = async (contractId: string) => {
     if (!message.trim()) return;
-    await api.sendContractMessage(contractId, { content: message });
-    setMessage('');
-    load();
+    try {
+      await api.sendContractMessage(contractId, { content: message });
+      setMessage('');
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to send message');
+    }
   };
 
   const complete = async () => {
     if (!completeModal) return;
-    await api.completeContract(completeModal.id, { rating, feedback });
-    setCompleteModal(null);
-    load();
+    try {
+      await api.completeContract(completeModal.id, { rating, feedback });
+      setCompleteModal(null);
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to complete contract');
+    }
   };
 
   const cancel = async (id: string) => {
     if (!confirm('Cancel this contract?')) return;
-    await api.cancelContract(id);
-    load();
+    try {
+      await api.cancelContract(id);
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to cancel contract');
+    }
   };
 
   const pause = async (id: string) => {
-    await api.pauseContract(id);
-    load();
+    try {
+      await api.pauseContract(id);
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to pause contract');
+    }
   };
 
   const resume = async (id: string) => {
-    await api.resumeContract(id);
-    load();
+    try {
+      await api.resumeContract(id);
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to resume contract');
+    }
   };
 
   const logHours = async (id: string) => {
     const h = hoursInput[id];
     if (!h || h <= 0) return;
-    await api.logContractHours(id, { hours: h });
-    setHoursInput((prev) => ({ ...prev, [id]: 0 }));
-    load();
+    try {
+      await api.logContractHours(id, { hours: h });
+      setHoursInput((prev) => ({ ...prev, [id]: 0 }));
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to log hours');
+    }
   };
 
   if (loading) {
@@ -141,6 +166,12 @@ export function ContractsPage() {
 
   return (
     <div className="space-y-6">
+      {actionError && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError('')} className="ml-4 text-xs underline">Dismiss</button>
+        </div>
+      )}
       {/* Summary pills */}
       <div className="flex flex-wrap gap-2">
         {['active', 'pending', 'paused', 'review', 'completed', 'cancelled'].map((s) => {
