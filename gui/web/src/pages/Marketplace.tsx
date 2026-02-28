@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { KnowledgeBasePanel } from '@/components/personas/KnowledgeBasePanel';
@@ -30,6 +31,7 @@ import {
   Pencil,
   Save,
   X,
+  Settings,
 } from 'lucide-react';
 
 interface AgentListing {
@@ -95,6 +97,7 @@ const availabilityStyles: Record<string, string> = {
 };
 
 export function MarketplacePage() {
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentListing[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -454,6 +457,14 @@ export function MarketplacePage() {
 
               {/* Action buttons */}
               <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => navigate(`/marketplace/${agent.id}/configure`)}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted transition-colors hover:text-foreground hover:border-accent/40"
+                  title="Configure agent"
+                >
+                  <Settings className="h-4 w-4" />
+                  Configure
+                </button>
                 {isAdmin && (
                   <button
                     onClick={() => openEdit(agent)}

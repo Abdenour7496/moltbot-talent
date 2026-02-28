@@ -1,8 +1,8 @@
 /**
- * KnowledgeBasePanel
+ * AgentKnowledgePanel
  *
- * Shown inside the PersonaDetail view. Displays the currently linked
- * knowledge base and lets the user:
+ * Shown inside the AgentConfigure page. Displays the currently linked
+ * knowledge base for a marketplace agent and lets the user:
  *   • Assign a local or Azure AI Search KB
  *   • Create a brand-new local KB and immediately link it
  *   • Detach the current KB
@@ -40,15 +40,15 @@ interface KbInfo {
   type?: 'local' | 'azure';
 }
 
-interface KnowledgeBasePanelProps {
-  personaId: string;
-  personaName: string;
+interface AgentKnowledgePanelProps {
+  agentId: string;
+  agentName: string;
 }
 
 type PanelMode = 'view' | 'pick' | 'create';
 type PickTab = 'local' | 'azure';
 
-export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePanelProps) {
+export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelProps) {
   const [currentKb, setCurrentKb] = useState<KbInfo | null>(null);
   const [loadingCurrent, setLoadingCurrent] = useState(true);
 
@@ -76,18 +76,17 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
   const [detaching, setDetaching] = useState(false);
   const [actionError, setActionError] = useState('');
 
-  /* ── Load the currently linked KB ── */
   const fetchCurrent = useCallback(async () => {
     setLoadingCurrent(true);
     try {
-      const { knowledgeBase } = await api.getPersonaKnowledge(personaId);
+      const { knowledgeBase } = await api.getAgentKnowledge(agentId);
       setCurrentKb(knowledgeBase);
     } catch {
       setCurrentKb(null);
     } finally {
       setLoadingCurrent(false);
     }
-  }, [personaId]);
+  }, [agentId]);
 
   useEffect(() => {
     fetchCurrent();
@@ -107,29 +106,30 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
       .finally(() => setLocalKbsLoading(false));
 
     setAzureKbsLoading(true);
+    // Check Azure status first, then list
     api.getAzureKnowledgeBases()
       .then((kbs) => { setAzureKbs(kbs); setAzureConfigured(true); })
       .catch(() => { setAzureConfigured(false); })
       .finally(() => setAzureKbsLoading(false));
 
+    // Pre-select current Azure KB tab if currently linked to Azure
     if (currentKb?.type === 'azure') {
       setPickTab('azure');
       setSelectedAzureId(currentKb.id);
     }
   }, [mode, currentKb]);
 
-  /* ── Assign a KB ── */
   const handleAssign = async () => {
     setAssigning(true);
     setActionError('');
     try {
       if (pickTab === 'azure') {
         if (!selectedAzureId) return;
-        const { knowledgeBase } = await api.assignKnowledgeBase(personaId, selectedAzureId, 'azure');
+        const { knowledgeBase } = await api.assignAgentKnowledge(agentId, selectedAzureId, 'azure');
         setCurrentKb(knowledgeBase);
       } else {
         if (!selectedLocalId) return;
-        const { knowledgeBase } = await api.assignKnowledgeBase(personaId, selectedLocalId, 'local');
+        const { knowledgeBase } = await api.assignAgentKnowledge(agentId, selectedLocalId, 'local');
         setCurrentKb(knowledgeBase);
       }
       setMode('view');
@@ -140,14 +140,13 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
     }
   };
 
-  /* ── Create a new local KB and link it ── */
   const handleCreateAndLink = async () => {
     if (!newName || !newDomain) return;
     setCreating(true);
     setCreateError('');
     try {
       const kb = await api.createKnowledgeBase({ name: newName, domain: newDomain });
-      const { knowledgeBase } = await api.assignKnowledgeBase(personaId, kb.id, 'local');
+      const { knowledgeBase } = await api.assignAgentKnowledge(agentId, kb.id, 'local');
       setCurrentKb(knowledgeBase);
       setMode('view');
       setNewName('');
@@ -159,12 +158,11 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
     }
   };
 
-  /* ── Detach the current KB ── */
   const handleDetach = async () => {
     setDetaching(true);
     setActionError('');
     try {
-      await api.detachKnowledgeBase(personaId);
+      await api.detachAgentKnowledge(agentId);
       setCurrentKb(null);
     } catch (e: any) {
       setActionError(e.message ?? 'Failed to detach knowledge base');
@@ -185,8 +183,6 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
 
   const isAzure = currentKb?.type === 'azure' || currentKb?.provider === 'azure-search';
 
-  /* ─────────────────────── RENDER ─────────────────────── */
-
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
@@ -203,10 +199,7 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
         <div className="flex items-center gap-2">
           {mode === 'view' && (
             <>
-              <Button
-                variant="outline" size="sm" onClick={fetchCurrent}
-                disabled={loadingCurrent} title="Refresh"
-              >
+              <Button variant="outline" size="sm" onClick={fetchCurrent} disabled={loadingCurrent} title="Refresh">
                 <RefreshCw className={`h-3.5 w-3.5 ${loadingCurrent ? 'animate-spin' : ''}`} />
               </Button>
               {currentKb ? (
@@ -238,7 +231,6 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
       </CardHeader>
 
       <CardContent className="space-y-3">
-        {/* Error banner */}
         {actionError && (
           <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
@@ -259,9 +251,7 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
                   <div>
                     <p className="font-medium text-sm">{currentKb.name}</p>
                     <p className="text-xs text-muted mt-0.5">
-                      {isAzure
-                        ? 'Azure AI Search index'
-                        : <>Domain: <span className="text-foreground">{currentKb.domain}</span></>}
+                      {isAzure ? 'Azure AI Search index' : <>Domain: <span className="text-foreground">{currentKb.domain}</span></>}
                     </p>
                   </div>
                   <Badge variant="outline" className="shrink-0 text-[10px]">
@@ -282,7 +272,7 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
                 )}
                 <p className="text-xs text-muted">
                   This knowledge base will be queried when{' '}
-                  <span className="font-medium text-foreground">{personaName}</span> needs domain context.
+                  <span className="font-medium text-foreground">{agentName}</span> needs domain context.
                 </p>
               </div>
             ) : (
@@ -290,8 +280,7 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
                 <Database className="h-8 w-8 text-muted mx-auto" />
                 <p className="text-sm font-medium">No knowledge base linked</p>
                 <p className="text-xs text-muted">
-                  Assign a local or Azure AI Search knowledge base to give this persona access to domain-specific
-                  documents during conversations.
+                  Assign a local or Azure AI Search knowledge base to give this agent access to domain-specific documents.
                 </p>
               </div>
             )}
@@ -303,7 +292,7 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
           <div className="space-y-3">
             <p className="text-xs text-muted">
               Select a knowledge base to link to{' '}
-              <span className="font-medium text-foreground">{personaName}</span>.
+              <span className="font-medium text-foreground">{agentName}</span>.
             </p>
 
             {/* Tab toggle: Local / Azure */}
@@ -350,7 +339,6 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
                         </option>
                       ))}
                     </Select>
-
                     {selectedLocalId && (() => {
                       const kb = localKbs.find((k) => k.id === selectedLocalId);
                       return kb ? (
@@ -435,12 +423,12 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
           </div>
         )}
 
-        {/* ── CREATE mode — new local KB inline ── */}
+        {/* ── CREATE mode (local KB only) ── */}
         {mode === 'create' && (
           <div className="space-y-3">
             <p className="text-xs text-muted">
               Create a new local knowledge base and immediately link it to{' '}
-              <span className="font-medium text-foreground">{personaName}</span>.
+              <span className="font-medium text-foreground">{agentName}</span>.
             </p>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -470,16 +458,8 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
             )}
 
             <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                onClick={handleCreateAndLink}
-                disabled={!newName || !newDomain || creating}
-              >
-                {creating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Database className="h-3.5 w-3.5" />
-                )}
+              <Button size="sm" onClick={handleCreateAndLink} disabled={!newName || !newDomain || creating}>
+                {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
                 {creating ? 'Creating…' : 'Create & Link'}
               </Button>
               <Button size="sm" variant="ghost" onClick={cancelPicker}>Cancel</Button>
@@ -494,16 +474,7 @@ export function KnowledgeBasePanel({ personaId, personaName }: KnowledgeBasePane
   );
 }
 
-/* Small helper stat card */
-function Stat({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-}) {
+function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
   return (
     <div className="rounded-md bg-hover px-3 py-2">
       <div className="flex items-center gap-1 text-muted mb-0.5">

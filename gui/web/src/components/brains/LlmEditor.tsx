@@ -114,7 +114,7 @@ export function LlmEditor({ initial, onSave, onCancel }: LlmEditorProps) {
                 <label className="text-xs text-muted mb-1 block">Max Tokens</label>
                 <Input
                   type="number"
-                  step="256"
+                  step="1"
                   min="1"
                   value={maxTokens}
                   onChange={(e) => setMaxTokens(parseInt(e.target.value, 10))}

@@ -13,8 +13,10 @@ export interface PersonaConfig {
   path: string;
   integrations?: string[];
   skills?: string[];
-  /** ID of the knowledge base attached to this persona (optional) */
+  /** ID of the local knowledge base attached to this persona (optional) */
   knowledgeBaseId?: string;
+  /** Name of the Azure AI Search knowledge base attached to this persona (optional) */
+  azureKnowledgeBaseId?: string;
 }
 
 export interface LoadedPersona {
@@ -256,6 +258,17 @@ export interface AgentListing {
   languages: string[];         // programming / natural languages
   certifications: string[];
   createdAt: Date;
+  // Content fields (persona-parity)
+  soul?: string;
+  expertise?: string;
+  procedures?: string;
+  tools?: string;
+  /** ID of the local knowledge base attached to this agent (optional) */
+  knowledgeBaseId?: string;
+  /** Name of the Azure AI Search knowledge base attached to this agent (optional) */
+  azureKnowledgeBaseId?: string;
+  /** IDs of integrations assigned to this agent */
+  integrations?: string[];
 }
 
 // ── Contracts (Hiring lifecycle) ───────────────────────────────────

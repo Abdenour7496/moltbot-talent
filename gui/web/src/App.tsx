@@ -26,6 +26,7 @@ import { LoginPage } from './pages/Login';
 import { RegisterPage } from './pages/Register';
 import { UsersPage } from './pages/Users';
 import { MarketplacePage } from './pages/Marketplace';
+import { AgentConfigurePage } from './pages/AgentConfigure';
 import { ContractsPage } from './pages/Contracts';
 import { OrganizationsPage } from './pages/Organizations';
 import { HelpPage } from './pages/Help';
@@ -83,6 +84,7 @@ export default function App() {
             <Route path="gateway" element={<GatewayPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="marketplace" element={<MarketplacePage />} />
+            <Route path="marketplace/:id/configure" element={<AgentConfigurePage />} />
             <Route path="contracts" element={<ContractsPage />} />
             <Route path="organizations" element={<OrganizationsPage />} />
             <Route path="org/portal" element={<OrgPortalPage />} />

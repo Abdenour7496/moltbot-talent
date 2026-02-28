@@ -51,17 +51,18 @@ export const api = {
     request<any>(`/personas/${id}/progress`),
   // Knowledge base assignment on a persona
   getPersonaKnowledge: (personaId: string) =>
-    request<{ knowledgeBase: any | null }>(`/personas/${personaId}/knowledge`),
-  assignKnowledgeBase: (personaId: string, knowledgeBaseId: string) =>
-    request<{ knowledgeBase: any }>(`/personas/${personaId}/knowledge`, {
+    request<{ knowledgeBase: any | null; kbType: 'local' | 'azure' | null }>(`/personas/${personaId}/knowledge`),
+  assignKnowledgeBase: (personaId: string, knowledgeBaseId: string, kbType: 'local' | 'azure' = 'local') =>
+    request<{ knowledgeBase: any; kbType: string }>(`/personas/${personaId}/knowledge`, {
       method: 'POST',
-      body: JSON.stringify({ knowledgeBaseId }),
+      body: JSON.stringify({ knowledgeBaseId, kbType }),
     }),
   detachKnowledgeBase: (personaId: string) =>
     request<{ detached: boolean }>(`/personas/${personaId}/knowledge`, { method: 'DELETE' }),
 
   // Knowledge
   getKnowledgeBases: () => request<any[]>('/knowledge'),
+  getAzureKnowledgeBases: () => request<any[]>('/azure-knowledge-bases'),
   createKnowledgeBase: (data: { name: string; domain: string }) =>
     request<any>('/knowledge', { method: 'POST', body: JSON.stringify(data) }),
   getKBStats: (id: string) => request<any>(`/knowledge/${id}/stats`),
@@ -71,6 +72,14 @@ export const api = {
     request<any>(`/knowledge/${id}/query`, { method: 'POST', body: JSON.stringify(data) }),
   deleteKnowledgeBase: (id: string) =>
     request<any>(`/knowledge/${id}`, { method: 'DELETE' }),
+
+  // Persona integrations
+  getPersonaIntegrations: (personaId: string) =>
+    request<any[]>(`/personas/${personaId}/integrations`),
+  addPersonaIntegration: (personaId: string, integrationId: string) =>
+    request<any>(`/personas/${personaId}/integrations`, { method: 'POST', body: JSON.stringify({ integrationId }) }),
+  removePersonaIntegration: (personaId: string, integrationId: string) =>
+    request<{ removed: boolean }>(`/personas/${personaId}/integrations/${integrationId}`, { method: 'DELETE' }),
 
   // Approvals
   getApprovals: (status?: string) =>
@@ -257,6 +266,44 @@ export const api = {
     request<any>(`/marketplace/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAgentListing: (id: string) =>
     request<any>(`/marketplace/${id}`, { method: 'DELETE' }),
+  chatWithAgent: (id: string, message: string) =>
+    request<any>(`/marketplace/${id}/chat`, { method: 'POST', body: JSON.stringify({ message }) }),
+
+  // Agent config (soul/expertise/procedures/tools + profile fields)
+  updateAgentConfig: (id: string, data: Record<string, any>) =>
+    request<any>(`/marketplace/${id}/config`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Agent integrations
+  getAgentIntegrations: (id: string) =>
+    request<any[]>(`/marketplace/${id}/integrations`),
+  addAgentIntegration: (id: string, integrationId: string) =>
+    request<any>(`/marketplace/${id}/integrations`, { method: 'POST', body: JSON.stringify({ integrationId }) }),
+  removeAgentIntegration: (id: string, integrationId: string) =>
+    request<{ removed: boolean }>(`/marketplace/${id}/integrations/${integrationId}`, { method: 'DELETE' }),
+
+  // Agent knowledge base
+  getAgentKnowledge: (id: string) =>
+    request<{ knowledgeBase: any; kbType: 'local' | 'azure' | null }>(`/marketplace/${id}/knowledge`),
+  assignAgentKnowledge: (id: string, kbId: string, kbType: 'local' | 'azure' = 'local') =>
+    request<{ knowledgeBase: any; kbType: string }>(`/marketplace/${id}/knowledge`, { method: 'POST', body: JSON.stringify({ kbId, kbType }) }),
+  detachAgentKnowledge: (id: string) =>
+    request<{ detached: boolean }>(`/marketplace/${id}/knowledge`, { method: 'DELETE' }),
+
+  // Agent brain
+  getAgentBrain: (id: string) => request<any>(`/agents/${id}/brain`),
+  updateAgentBrain: (id: string, data: { routingStrategy?: string; fallbackLlmId?: string }) =>
+    request<any>(`/agents/${id}/brain`, { method: 'PUT', body: JSON.stringify(data) }),
+  getAgentBrainLlms: (id: string) => request<any[]>(`/agents/${id}/brain/llms`),
+  addAgentBrainLlm: (id: string, data: any) =>
+    request<any>(`/agents/${id}/brain/llms`, { method: 'POST', body: JSON.stringify(data) }),
+  updateAgentBrainLlm: (id: string, llmId: string, data: any) =>
+    request<any>(`/agents/${id}/brain/llms/${llmId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAgentBrainLlm: (id: string, llmId: string) =>
+    request<any>(`/agents/${id}/brain/llms/${llmId}`, { method: 'DELETE' }),
+  testAgentBrainLlm: (id: string, llmId: string) =>
+    request<any>(`/agents/${id}/brain/llms/${llmId}/test`, { method: 'POST', body: '{}' }),
+  reorderAgentBrainLlms: (id: string, orderedIds: string[]) =>
+    request<any[]>(`/agents/${id}/brain/llms/reorder`, { method: 'PUT', body: JSON.stringify({ orderedIds }) }),
 
   // Contracts
   getContracts: (qs?: string) => request<any[]>(`/contracts${qs || ''}`),

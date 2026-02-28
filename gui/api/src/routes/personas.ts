@@ -5,6 +5,7 @@ import { constants } from 'fs';
 import {
   personas,
   knowledgeBases,
+  integrations,
   addAuditEntry,
   loadPersonaFromDir,
   discoverAndLoadPersonas,
@@ -319,14 +320,29 @@ router.get('/:id/knowledge', (req, res) => {
     return;
   }
 
+  if (persona.config.azureKnowledgeBaseId) {
+    const azureKb = {
+      id: persona.config.azureKnowledgeBaseId,
+      name: persona.config.azureKnowledgeBaseId,
+      domain: 'azure-search',
+      provider: 'azure-search',
+      embeddingModel: 'Azure AI',
+      documentCount: 0,
+      chunkCount: 0,
+      type: 'azure',
+    };
+    res.json({ knowledgeBase: azureKb, kbType: 'azure' });
+    return;
+  }
+
   const kbId = persona.config.knowledgeBaseId;
   if (!kbId) {
-    res.json({ knowledgeBase: null });
+    res.json({ knowledgeBase: null, kbType: null });
     return;
   }
 
   const kb = knowledgeBases.get(kbId);
-  res.json({ knowledgeBase: kb ?? null });
+  res.json({ knowledgeBase: kb ? { ...kb, type: 'local' } : null, kbType: kb ? 'local' : null });
 });
 
 // Assign (or replace) a knowledge base for a persona
@@ -337,9 +353,32 @@ router.post('/:id/knowledge', (req, res) => {
     return;
   }
 
-  const { knowledgeBaseId } = req.body as { knowledgeBaseId: string };
+  const { knowledgeBaseId, kbType } = req.body as { knowledgeBaseId: string; kbType?: string };
   if (!knowledgeBaseId) {
     res.status(400).json({ error: 'knowledgeBaseId is required' });
+    return;
+  }
+
+  if (kbType === 'azure') {
+    persona.config.azureKnowledgeBaseId = knowledgeBaseId;
+    persona.config.knowledgeBaseId = undefined;
+
+    addAuditEntry({
+      persona: persona.config.id,
+      action: 'knowledge_base_assigned',
+      target: knowledgeBaseId,
+      outcome: 'success',
+      details: { kbType: 'azure' },
+    });
+
+    res.json({
+      knowledgeBase: {
+        id: knowledgeBaseId, name: knowledgeBaseId, domain: 'azure-search',
+        provider: 'azure-search', embeddingModel: 'Azure AI',
+        documentCount: 0, chunkCount: 0, type: 'azure',
+      },
+      kbType: 'azure',
+    });
     return;
   }
 
@@ -349,6 +388,7 @@ router.post('/:id/knowledge', (req, res) => {
   }
 
   persona.config.knowledgeBaseId = knowledgeBaseId;
+  persona.config.azureKnowledgeBaseId = undefined;
   const kb = knowledgeBases.get(knowledgeBaseId)!;
 
   addAuditEntry({
@@ -359,7 +399,7 @@ router.post('/:id/knowledge', (req, res) => {
     details: { kbName: kb.name, kbDomain: kb.domain },
   });
 
-  res.json({ knowledgeBase: kb });
+  res.json({ knowledgeBase: { ...kb, type: 'local' }, kbType: 'local' });
 });
 
 // Remove the knowledge base link from a persona
@@ -370,8 +410,9 @@ router.delete('/:id/knowledge', (req, res) => {
     return;
   }
 
-  const prev = persona.config.knowledgeBaseId;
+  const prev = persona.config.knowledgeBaseId ?? persona.config.azureKnowledgeBaseId;
   persona.config.knowledgeBaseId = undefined;
+  persona.config.azureKnowledgeBaseId = undefined;
 
   addAuditEntry({
     persona: persona.config.id,
@@ -381,6 +422,66 @@ router.delete('/:id/knowledge', (req, res) => {
   });
 
   res.json({ detached: true });
+});
+
+// ── Integration assignment ────────────────────────────────────────
+
+// GET /api/personas/:id/integrations — list full IntegrationInfo for assigned integrations
+router.get('/:id/integrations', (req, res) => {
+  const persona = personas.get(req.params.id);
+  if (!persona) { res.status(404).json({ error: 'Persona not found' }); return; }
+
+  const ids = persona.config.integrations ?? [];
+  const result = ids
+    .map((iid) => integrations.get(iid))
+    .filter(Boolean);
+  res.json(result);
+});
+
+// POST /api/personas/:id/integrations — assign an integration
+router.post('/:id/integrations', (req, res) => {
+  const persona = personas.get(req.params.id);
+  if (!persona) { res.status(404).json({ error: 'Persona not found' }); return; }
+
+  const { integrationId } = req.body as { integrationId: string };
+  if (!integrationId) { res.status(400).json({ error: 'integrationId is required' }); return; }
+
+  const integration = integrations.get(integrationId);
+  if (!integration) { res.status(404).json({ error: 'Integration not found' }); return; }
+
+  const current = persona.config.integrations ?? [];
+  if (!current.includes(integrationId)) {
+    persona.config.integrations = [...current, integrationId];
+  }
+
+  addAuditEntry({
+    persona: persona.config.id,
+    action: 'persona_integration_assigned',
+    target: integrationId,
+    outcome: 'success',
+    details: { integrationName: integration.name, integrationType: integration.type },
+  });
+
+  res.json(integration);
+});
+
+// DELETE /api/personas/:id/integrations/:integrationId — remove integration
+router.delete('/:id/integrations/:integrationId', (req, res) => {
+  const persona = personas.get(req.params.id);
+  if (!persona) { res.status(404).json({ error: 'Persona not found' }); return; }
+
+  persona.config.integrations = (persona.config.integrations ?? []).filter(
+    (iid) => iid !== req.params.integrationId,
+  );
+
+  addAuditEntry({
+    persona: persona.config.id,
+    action: 'persona_integration_removed',
+    target: req.params.integrationId,
+    outcome: 'success',
+  });
+
+  res.json({ removed: true });
 });
 
 /**
