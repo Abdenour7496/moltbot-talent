@@ -29,6 +29,7 @@ import {
   Bot,
   Pencil,
   Save,
+  X,
 } from 'lucide-react';
 
 interface AgentListing {
@@ -120,6 +121,13 @@ export function MarketplacePage() {
   const [personaForm, setPersonaForm] = useState({ personaId: '', title: '', specialty: '', hourlyRate: 100, description: '' });
   const [addError, setAddError] = useState('');
   const [adding, setAdding] = useState(false);
+
+  // Hire state
+  const [hiring, setHiring] = useState(false);
+  const [hireError, setHireError] = useState('');
+  const [hireKbError, setHireKbError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [successContractId, setSuccessContractId] = useState('');
 
   // Edit agent state
   const { user: currentUser } = useAuth();
@@ -216,6 +224,8 @@ export function MarketplacePage() {
     setSelected(agent);
     setShowHire(true);
     setHiredPersonaId(null);
+    setHireError('');
+    setHireKbError('');
     // Reset KB state
     setHireKbMode('none');
     setHireKbId('');
@@ -234,19 +244,30 @@ export function MarketplacePage() {
 
   const handleHire = async () => {
     if (!selected || !hireForm.tenantId || !hireForm.title) return;
-    const result = await api.hireAgent(selected.id, hireForm);
-    // If the hire result contains a personaId and the user picked a KB, link it
-    const personaId: string | undefined = result?.personaId ?? selected.id;
-    if (personaId && hireKbId) {
-      await api.assignKnowledgeBase(personaId, hireKbId).catch(() => {});
+    setHiring(true);
+    setHireError('');
+    try {
+      const result = await api.hireAgent(selected.id, hireForm);
+      // If the hire result contains a personaId and the user picked a KB, link it
+      const personaId: string | undefined = result?.personaId ?? selected.id;
+      if (personaId && hireKbId) {
+        await api.assignKnowledgeBase(personaId, hireKbId).catch(() => {});
+      }
+      setShowHire(false);
+      setSuccessMsg(`${selected.name} hired successfully! Contract "${hireForm.title}" is now active.`);
+      setSuccessContractId(result?.id ?? '');
+      refresh();
+    } catch (err: any) {
+      setHireError(err.message ?? 'Failed to hire agent. Please try again.');
+    } finally {
+      setHiring(false);
     }
-    setShowHire(false);
-    refresh();
   };
 
   const handleHireCreateKb = async () => {
     if (!hireNewKbName || !hireNewKbDomain) return;
     setHireCreatingKb(true);
+    setHireKbError('');
     try {
       const kb = await api.createKnowledgeBase({ name: hireNewKbName, domain: hireNewKbDomain });
       setHireKbs((prev) => [...prev, kb]);
@@ -254,8 +275,8 @@ export function MarketplacePage() {
       setHireKbMode('existing');
       setHireNewKbName('');
       setHireNewKbDomain('');
-    } catch {
-      // ignore
+    } catch (err: any) {
+      setHireKbError(err.message ?? 'Failed to create knowledge base');
     } finally {
       setHireCreatingKb(false);
     }
@@ -271,6 +292,26 @@ export function MarketplacePage() {
 
   return (
     <div className="space-y-6">
+      {/* Hire success banner */}
+      {successMsg && (
+        <div className="flex items-center justify-between rounded-lg bg-success/10 border border-success/20 px-4 py-3 text-sm text-success">
+          <span>{successMsg}</span>
+          <div className="flex items-center gap-3">
+            {successContractId && (
+              <a
+                href="/contracts"
+                className="rounded-md bg-success/20 px-3 py-1 text-xs font-medium hover:bg-success/30 transition-colors"
+              >
+                View Contract
+              </a>
+            )}
+            <button onClick={() => setSuccessMsg('')} className="text-success/70 hover:text-success">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Stats row */}
       {stats && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -447,15 +488,21 @@ export function MarketplacePage() {
       {/* Hire modal */}
       {showHire && selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 space-y-4">
-            <h2 className="text-lg font-semibold">
-              Hire {selected.name}
-            </h2>
-            <p className="text-xs text-muted">
-              {selected.title} &middot; ${selected.hourlyRate}/hr
-            </p>
+          <div className="w-full max-w-md rounded-xl border border-border bg-card flex flex-col max-h-[90vh]">
+            <div className="p-6 pb-3">
+              <h2 className="text-lg font-semibold">Hire {selected.name}</h2>
+              <p className="text-xs text-muted mt-0.5">
+                {selected.title} &middot; ${selected.hourlyRate}/hr
+              </p>
+            </div>
 
-            <div className="space-y-3">
+            {hireError && (
+              <div className="mx-6 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {hireError}
+              </div>
+            )}
+
+            <div className="overflow-y-auto px-6 pb-2 space-y-3">
               {/* Org selector: only for admins without an org */}
               {!currentUser?.tenantId && (
                 <div className="space-y-1">
@@ -562,6 +609,9 @@ export function MarketplacePage() {
                 {/* Create new inline */}
                 {hireKbMode === 'new' && (
                   <div className="space-y-2 rounded-lg border border-border p-3">
+                    {hireKbError && (
+                      <p className="text-xs text-destructive">{hireKbError}</p>
+                    )}
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         placeholder="KB name"
@@ -590,18 +640,19 @@ export function MarketplacePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex items-center gap-3 p-6 pt-3 border-t border-border">
               <button
                 onClick={handleHire}
-                disabled={!hireForm.tenantId || !hireForm.title}
+                disabled={!hireForm.tenantId || !hireForm.title || hiring}
                 className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-50"
               >
-                <ShoppingBag className="h-4 w-4" />
-                Confirm Hire
+                {hiring ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingBag className="h-4 w-4" />}
+                {hiring ? 'Hiring…' : 'Confirm Hire'}
               </button>
               <button
                 onClick={() => setShowHire(false)}
-                className="rounded-lg px-4 py-2 text-sm text-muted hover:text-foreground"
+                disabled={hiring}
+                className="rounded-lg px-4 py-2 text-sm text-muted hover:text-foreground disabled:opacity-50"
               >
                 Cancel
               </button>
