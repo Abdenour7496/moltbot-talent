@@ -7,6 +7,8 @@
  */
 
 export { KnowledgeBase, type KnowledgeBaseConfig } from './knowledge-base.js';
+export type { PersonaConfig, LoadedPersona, TurnContext, RetrievedSource, ApprovalRequest, AuditEntry } from './orchestrator.js';
+export { TalentOrchestrator } from './orchestrator.js';
 export { DocumentIngester, type IngestionConfig } from './ingestion/index.js';
 export { VectorStore, type VectorStoreConfig } from './vectordb/index.js';
 export { RAGRetriever, type RetrievalConfig, type RetrievalResult } from './retrieval/index.js';

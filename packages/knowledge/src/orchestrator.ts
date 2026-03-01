@@ -46,6 +46,20 @@ export interface LoadedPersona {
 }
 
 /**
+ * Source attribution for a retrieved chunk
+ */
+export interface RetrievedSource {
+  /** Chunk ID from the vector store */
+  chunkId: string;
+  /** Parent document ID */
+  documentId: string;
+  /** Human-readable source (title or file path) */
+  source: string;
+  /** Similarity score (0–1) */
+  score: number;
+}
+
+/**
  * Context assembled for an agent turn
  */
 export interface TurnContext {
@@ -57,6 +71,10 @@ export interface TurnContext {
   tools: string[];
   /** Approval requirements for pending actions */
   approvalRequired: boolean;
+  /** IDs of chunks retrieved from the knowledge base this turn */
+  retrievalIds: string[];
+  /** Full source attribution for each retrieved chunk */
+  retrievedSources: RetrievedSource[];
 }
 
 /**
@@ -203,6 +221,8 @@ export class TalentOrchestrator {
         knowledgeContext: '',
         tools: [],
         approvalRequired: false,
+        retrievalIds: [],
+        retrievedSources: [],
       };
     }
 
@@ -227,12 +247,45 @@ export class TalentOrchestrator {
 
     // Retrieve knowledge context if available
     let knowledgeContext = '';
+    let retrievalIds: string[] = [];
+    let retrievedSources: RetrievedSource[] = [];
+
     if (persona.knowledgeBase) {
+      const kbId = persona.config.knowledge?.id;
       try {
         const results = await persona.knowledgeBase.query(query, { topK: 5 });
         knowledgeContext = persona.knowledgeBase.buildContext(results);
+
+        // Track which documents influenced the output
+        retrievalIds = results.map(r => r.chunk.id);
+        retrievedSources = results.map(r => ({
+          chunkId: r.chunk.id,
+          documentId: r.chunk.documentId,
+          source: r.chunk.metadata.title ?? r.chunk.metadata.source,
+          score: r.score,
+        }));
+
+        // Log retrieval IDs in audit trail
+        this.log({
+          action: 'knowledge_retrieved',
+          target: kbId,
+          outcome: 'success',
+          details: {
+            query: query.slice(0, 200),
+            kbId,
+            chunkCount: results.length,
+            retrievalIds,
+            sources: retrievedSources.map(s => s.source),
+          },
+        });
       } catch (error) {
         console.warn('Knowledge retrieval failed:', error);
+        this.log({
+          action: 'knowledge_retrieved',
+          target: kbId,
+          outcome: 'failure',
+          details: { query: query.slice(0, 200), kbId, error: String(error) },
+        });
       }
     }
 
@@ -244,6 +297,8 @@ export class TalentOrchestrator {
       knowledgeContext,
       tools,
       approvalRequired: this.pendingApprovals.size > 0,
+      retrievalIds,
+      retrievedSources,
     };
   }
 

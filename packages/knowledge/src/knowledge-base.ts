@@ -202,8 +202,8 @@ export class KnowledgeBase {
       const { chunk, score } = result;
       const source = chunk.metadata.title ?? chunk.metadata.source;
       const category = chunk.metadata.category ?? 'document';
-      
-      return `[Source ${index + 1}: ${source} (${category}, relevance: ${(score * 100).toFixed(0)}%)]
+
+      return `[Source ${index + 1}: ${source} (${category}, relevance: ${(score * 100).toFixed(0)}%, chunk_id: ${chunk.id}, doc_id: ${chunk.documentId})]
 ${chunk.content}`;
     });
     
