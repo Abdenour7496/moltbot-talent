@@ -20,6 +20,9 @@ export interface PersonaConfig {
   /** Orgo action types this persona may invoke. Empty/absent = deny all.
    *  Values: 'screenshot'|'click'|'drag'|'type'|'key'|'scroll'|'wait'|'bash'|'exec'|'prompt' */
   allowedOrgoTools?: string[];
+  /** IDs of departments this persona is assigned to.
+   *  Empty/absent = visible to admins only. */
+  departmentIds?: string[];
 }
 
 export interface LoadedPersona {
