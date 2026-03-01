@@ -1,42 +1,153 @@
+import { createHash, randomUUID } from 'crypto';
 import { Router, type Router as RouterType } from 'express';
-import {
-  workflowRuns,
-  nextWorkflowRunId,
-  addAuditEntry,
-  type WorkflowRunRecord,
-  type WorkflowStepExecution,
-} from '../state.js';
+import { prisma, logAudit } from '../db/index.js';
+import type { StepDefinition, ExecutionEvent, EventType } from '../workflow/types.js';
 
 const router: RouterType = Router();
 
+// ── Constants ───────────────────────────────────────────────────────────────
+
+const TERMINAL_STATUSES = ['done', 'failed', 'escalated', 'cancelled'] as const;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function sha256hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function deriveStepEventType(toStatus: string): EventType {
+  const map: Record<string, EventType> = {
+    running: 'step_started',
+    retrying: 'step_retrying',
+    done: 'step_completed',
+    failed: 'step_failed',
+    escalated: 'step_escalated',
+    cancelled: 'step_cancelled',
+  };
+  return map[toStatus] ?? 'step_started';
+}
+
+function deriveRunEventType(status: string): EventType | null {
+  const map: Record<string, EventType> = {
+    completed: 'run_completed',
+    failed: 'run_failed',
+    escalated: 'run_escalated',
+    cancelled: 'run_cancelled',
+  };
+  return map[status] ?? null;
+}
+
+function mapStep(s: any) {
+  return {
+    stepId: s.stepId,
+    agentId: s.agentId,
+    status: s.status,
+    attempts: s.attempts,
+    maxRetries: s.maxRetries,
+    idempotencyKey: s.idempotencyKey ?? undefined,
+    resolvedInput: s.resolvedInput ?? undefined,
+    inputHash: s.inputHash ?? undefined,
+    outputHash: s.outputHash ?? undefined,
+    result: s.result ?? undefined,
+    feedback: s.feedback ?? undefined,
+    output: s.output ?? undefined,
+    error: s.error ?? undefined,
+    startedAt: s.startedAt ?? undefined,
+    completedAt: s.completedAt ?? undefined,
+  };
+}
+
+function mapRun(run: any) {
+  return {
+    ...run,
+    stepDefinitions: run.stepDefinitions ?? {},
+    executionLog: run.executionLog ?? [],
+    steps: (run.steps ?? []).map(mapStep),
+  };
+}
+
+const STEPS_INCLUDE = { steps: { orderBy: { createdAt: 'asc' as const } } };
+
+// ── Routes ──────────────────────────────────────────────────────────────────
+
 // List all workflow runs
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const status = req.query.status as string | undefined;
-  let list = Array.from(workflowRuns.values());
-  if (status) {
-    list = list.filter((r) => r.status === status);
-  }
-  list.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-  res.json(list);
+
+  const runs = await prisma.workflowRun.findMany({
+    where: status ? { status: status as any } : undefined,
+    include: STEPS_INCLUDE,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json(runs.map(mapRun));
 });
 
 // Get single workflow run
-router.get('/:id', (req, res) => {
-  const run = workflowRuns.get(req.params.id);
+router.get('/:id', async (req, res) => {
+  const run = await prisma.workflowRun.findUnique({
+    where: { id: req.params.id },
+    include: STEPS_INCLUDE,
+  });
   if (!run) {
     res.status(404).json({ error: 'Workflow run not found' });
     return;
   }
-  res.json(run);
+  res.json(mapRun(run));
 });
 
-// Create a workflow run (simulated — in production the engine creates these)
-router.post('/', (req, res) => {
-  const { workflowId, workflowName, task, steps } = req.body as {
+// Replay manifest — full deterministic reconstruction of the run
+router.get('/:id/replay', async (req, res) => {
+  const run = await prisma.workflowRun.findUnique({
+    where: { id: req.params.id },
+    include: STEPS_INCLUDE,
+  });
+  if (!run) {
+    res.status(404).json({ error: 'Workflow run not found' });
+    return;
+  }
+
+  const events = ((run.executionLog as unknown as ExecutionEvent[]) ?? []).slice().sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+
+  res.json({
+    run: {
+      id: run.id,
+      workflowId: run.workflowId,
+      workflowName: run.workflowName,
+      task: run.task,
+      status: run.status,
+      variables: run.variables,
+      stepDefinitions: run.stepDefinitions,
+      createdAt: run.createdAt,
+      completedAt: run.completedAt ?? undefined,
+    },
+    events,
+    steps: (run.steps ?? []).map(mapStep),
+  });
+});
+
+// Get single step detail
+router.get('/:id/steps/:stepId', async (req, res) => {
+  const stepRecord = await prisma.workflowStepExecution.findFirst({
+    where: { runId: req.params.id, stepId: req.params.stepId },
+  });
+  if (!stepRecord) {
+    res.status(404).json({ error: 'Step not found in this run' });
+    return;
+  }
+  res.json(mapStep(stepRecord));
+});
+
+// Create a workflow run
+router.post('/', async (req, res) => {
+  const { workflowId, workflowName, task, steps, stepDefinitions } = req.body as {
     workflowId: string;
     workflowName: string;
     task: string;
     steps?: { stepId: string; agentId: string }[];
+    stepDefinitions?: Record<string, Omit<StepDefinition, 'stepId'>>;
   };
 
   if (!workflowId || !task) {
@@ -44,29 +155,39 @@ router.post('/', (req, res) => {
     return;
   }
 
-  const now = new Date();
-  const defaultSteps: WorkflowStepExecution[] = (steps ?? []).map((s) => ({
-    stepId: s.stepId,
-    agentId: s.agentId,
-    status: 'pending',
-    attempts: 0,
-  }));
+  const defs = stepDefinitions ?? {};
 
-  const run: WorkflowRunRecord = {
-    id: nextWorkflowRunId(),
-    workflowId,
-    workflowName: workflowName ?? workflowId,
-    task,
-    status: 'pending',
-    steps: defaultSteps,
-    variables: { task },
-    createdAt: now,
-    updatedAt: now,
+  const createdEvent: ExecutionEvent = {
+    eventId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    eventType: 'run_created',
+    actor: 'system',
+    data: { workflowId, task: task.slice(0, 200) },
   };
 
-  workflowRuns.set(run.id, run);
+  const run = await prisma.workflowRun.create({
+    data: {
+      workflowId,
+      workflowName: workflowName ?? workflowId,
+      task,
+      status: 'pending',
+      variables: { task },
+      stepDefinitions: defs as any,
+      executionLog: [createdEvent] as any,
+      steps: {
+        create: (steps ?? []).map((s) => ({
+          stepId: s.stepId,
+          agentId: s.agentId,
+          status: 'pending',
+          attempts: 0,
+          maxRetries: defs[s.stepId]?.maxRetries ?? 3,
+        })),
+      },
+    },
+    include: STEPS_INCLUDE,
+  });
 
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'workflow_run_created',
     target: run.id,
@@ -74,56 +195,170 @@ router.post('/', (req, res) => {
     details: { workflowId, task: task.slice(0, 200) },
   });
 
-  res.status(201).json(run);
+  res.status(201).json(mapRun(run));
 });
 
-// Update a workflow run step status (for simulation / webhook updates)
-router.put('/:id/steps/:stepId', (req, res) => {
-  const run = workflowRuns.get(req.params.id);
+// Update a workflow run step status
+router.put('/:id/steps/:stepId', async (req, res) => {
+  const run = await prisma.workflowRun.findUnique({
+    where: { id: req.params.id },
+    include: STEPS_INCLUDE,
+  });
   if (!run) {
     res.status(404).json({ error: 'Workflow run not found' });
     return;
   }
 
-  const step = run.steps.find((s) => s.stepId === req.params.stepId);
-  if (!step) {
+  const stepRecord = await prisma.workflowStepExecution.findFirst({
+    where: { runId: run.id, stepId: req.params.stepId },
+  });
+  if (!stepRecord) {
     res.status(404).json({ error: 'Step not found in this run' });
     return;
   }
 
-  const { status, output, error } = req.body;
-  if (status) step.status = status;
-  if (output) step.output = output;
-  if (error) step.error = error;
-  if (status === 'running' && !step.startedAt) step.startedAt = new Date();
-  if (status === 'done' || status === 'failed') step.completedAt = new Date();
-  step.attempts = (step.attempts ?? 0) + (status === 'retrying' ? 1 : 0);
+  const { status, output, error, idempotencyKey, resolvedInput, result, feedback, actor } =
+    req.body as {
+      status?: string;
+      output?: string;
+      error?: string;
+      idempotencyKey?: string;
+      resolvedInput?: string;
+      result?: Record<string, unknown>;
+      feedback?: string;
+      actor?: string;
+    };
 
-  run.updatedAt = new Date();
-
-  // Auto-advance run status
-  const allDone = run.steps.every((s) => s.status === 'done');
-  const anyFailed = run.steps.some((s) => s.status === 'failed');
-  const anyRunning = run.steps.some((s) => s.status === 'running');
-  const anyEscalated = run.steps.some((s) => s.status === 'escalated');
-
-  if (allDone) {
-    run.status = 'completed';
-    run.completedAt = new Date();
-  } else if (anyEscalated) {
-    run.status = 'escalated';
-  } else if (anyFailed) {
-    run.status = 'failed';
-  } else if (anyRunning) {
-    run.status = 'running';
+  // Guard 1 — Terminal state immutability
+  const isTerminal = TERMINAL_STATUSES.includes(stepRecord.status as any);
+  if (isTerminal) {
+    if (idempotencyKey && stepRecord.idempotencyKey === idempotencyKey) {
+      res.json(mapStep(stepRecord));
+      return;
+    }
+    res.status(409).json({
+      error: `Step '${stepRecord.stepId}' is already in terminal state '${stepRecord.status}'.`,
+      currentStatus: stepRecord.status,
+      hint: 'Terminal states are immutable. Create a new run to replay.',
+    });
+    return;
   }
 
-  res.json(run);
+  // Guard 2 — Max retries enforcement
+  if (status === 'retrying') {
+    const defs = run.stepDefinitions as unknown as Record<string, StepDefinition>;
+    const maxRetries = defs?.[req.params.stepId]?.maxRetries ?? stepRecord.maxRetries ?? 3;
+    if (stepRecord.attempts >= maxRetries) {
+      res.status(409).json({
+        error: `Step '${req.params.stepId}' has exhausted ${maxRetries} retries. Escalate or fail.`,
+        attempts: stepRecord.attempts,
+        maxRetries,
+      });
+      return;
+    }
+  }
+
+  const inputHash = resolvedInput ? sha256hex(resolvedInput) : undefined;
+  const outputHash = output ? sha256hex(output) : undefined;
+
+  const updatedRun = await prisma.$transaction(async (tx) => {
+    await tx.workflowStepExecution.update({
+      where: { id: stepRecord.id },
+      data: {
+        ...(status && { status: status as any }),
+        ...(output !== undefined && { output }),
+        ...(error !== undefined && { error }),
+        ...(idempotencyKey && { idempotencyKey }),
+        ...(resolvedInput && { resolvedInput, inputHash }),
+        ...(outputHash && { outputHash }),
+        ...(result && { result: result as any }),
+        ...(feedback !== undefined && { feedback }),
+        ...(status === 'running' && !stepRecord.startedAt && { startedAt: new Date() }),
+        ...((status === 'done' || status === 'failed') && { completedAt: new Date() }),
+        ...(status === 'retrying' && { attempts: { increment: 1 } }),
+      },
+    });
+
+    // Reload all steps to derive run status
+    const allSteps = await tx.workflowStepExecution.findMany({
+      where: { runId: run.id },
+    });
+
+    const stepsWithUpdate = allSteps.map((s) =>
+      s.stepId === req.params.stepId ? { ...s, status: status ?? s.status } : s,
+    );
+
+    const allDone = stepsWithUpdate.every((s) => s.status === 'done');
+    const anyFailed = stepsWithUpdate.some((s) => s.status === 'failed');
+    const anyRunning = stepsWithUpdate.some((s) => s.status === 'running');
+    const anyEscalated = stepsWithUpdate.some((s) => s.status === 'escalated');
+
+    let newRunStatus: string = run.status;
+    let completedAt: Date | null = null;
+
+    if (allDone) {
+      newRunStatus = 'completed';
+      completedAt = new Date();
+    } else if (anyEscalated) {
+      newRunStatus = 'escalated';
+    } else if (anyFailed) {
+      newRunStatus = 'failed';
+    } else if (anyRunning) {
+      newRunStatus = 'running';
+    }
+
+    // Build step event + optional run event
+    const stepEvent: ExecutionEvent = {
+      eventId: randomUUID(),
+      timestamp: new Date().toISOString(),
+      eventType: status ? deriveStepEventType(status) : 'step_started',
+      stepId: req.params.stepId,
+      fromStatus: stepRecord.status,
+      toStatus: status ?? stepRecord.status,
+      actor: actor ?? stepRecord.agentId,
+      data: {
+        ...(inputHash && { inputHash }),
+        ...(outputHash && { outputHash }),
+        ...(feedback && { feedback }),
+      },
+    };
+
+    const currentLog = (run.executionLog as unknown as ExecutionEvent[]) ?? [];
+    const events: ExecutionEvent[] = [...currentLog, stepEvent];
+
+    if (newRunStatus !== run.status) {
+      const runEventType = deriveRunEventType(newRunStatus);
+      if (runEventType) {
+        events.push({
+          eventId: randomUUID(),
+          timestamp: new Date().toISOString(),
+          eventType: runEventType,
+          actor: 'system',
+          data: { previousStatus: run.status, newStatus: newRunStatus },
+        });
+      }
+    }
+
+    return tx.workflowRun.update({
+      where: { id: run.id },
+      data: {
+        status: newRunStatus as any,
+        ...(completedAt && { completedAt }),
+        executionLog: events as any,
+      },
+      include: STEPS_INCLUDE,
+    });
+  });
+
+  res.json(mapRun(updatedRun));
 });
 
 // Cancel a workflow run (pending or running only)
-router.post('/:id/cancel', (req, res) => {
-  const run = workflowRuns.get(req.params.id);
+router.post('/:id/cancel', async (req, res) => {
+  const run = await prisma.workflowRun.findUnique({
+    where: { id: req.params.id },
+    include: STEPS_INCLUDE,
+  });
   if (!run) {
     res.status(404).json({ error: 'Workflow run not found' });
     return;
@@ -134,18 +369,38 @@ router.post('/:id/cancel', (req, res) => {
     return;
   }
 
-  run.status = 'cancelled' as any;
-  run.updatedAt = new Date();
-  run.completedAt = new Date();
+  const now = new Date();
 
-  // Mark all non-terminal steps as cancelled
-  for (const step of run.steps) {
-    if (step.status === 'pending' || step.status === 'running') {
-      step.status = 'cancelled' as any;
-    }
-  }
+  const cancelEvent: ExecutionEvent = {
+    eventId: randomUUID(),
+    timestamp: now.toISOString(),
+    eventType: 'run_cancelled',
+    actor: 'system',
+    data: { previousStatus: run.status },
+  };
 
-  addAuditEntry({
+  const currentLog = (run.executionLog as unknown as ExecutionEvent[]) ?? [];
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workflowStepExecution.updateMany({
+      where: {
+        runId: run.id,
+        status: { in: ['pending', 'running'] },
+      },
+      data: { status: 'cancelled' },
+    });
+
+    await tx.workflowRun.update({
+      where: { id: run.id },
+      data: {
+        status: 'cancelled',
+        completedAt: now,
+        executionLog: [...currentLog, cancelEvent] as any,
+      },
+    });
+  });
+
+  logAudit({
     persona: 'system',
     action: 'workflow_run_cancelled',
     target: run.id,
@@ -153,87 +408,25 @@ router.post('/:id/cancel', (req, res) => {
     details: { workflowId: run.workflowId },
   });
 
-  res.json(run);
+  const updated = await prisma.workflowRun.findUnique({
+    where: { id: run.id },
+    include: STEPS_INCLUDE,
+  });
+  res.json(mapRun(updated!));
 });
 
 // Delete a workflow run
-router.delete('/:id', (req, res) => {
-  if (!workflowRuns.has(req.params.id)) {
+router.delete('/:id', async (req, res) => {
+  const exists = await prisma.workflowRun.findUnique({
+    where: { id: req.params.id },
+    select: { id: true },
+  });
+  if (!exists) {
     res.status(404).json({ error: 'Workflow run not found' });
     return;
   }
-  workflowRuns.delete(req.params.id);
+  await prisma.workflowRun.delete({ where: { id: req.params.id } });
   res.json({ ok: true });
 });
 
 export default router;
-
-// ── Seed demo workflow runs ──────────────────────────────────────
-
-function seedWorkflowRuns() {
-  const now = new Date();
-
-  // Incident response run — completed
-  const run1: WorkflowRunRecord = {
-    id: nextWorkflowRunId(),
-    workflowId: 'incident-response',
-    workflowName: 'Incident Response Pipeline',
-    task: 'Production API returning 500 errors on /api/payments endpoint since 14:30 UTC',
-    status: 'completed',
-    steps: [
-      { stepId: 'triage', agentId: 'it-ops-specialist', status: 'done', attempts: 1, output: 'Root cause: database connection pool exhausted', startedAt: new Date(now.getTime() - 3600_000), completedAt: new Date(now.getTime() - 3300_000) },
-      { stepId: 'investigate', agentId: 'bug-triager', status: 'done', attempts: 1, output: 'Connection leak in PaymentService.processRefund()', startedAt: new Date(now.getTime() - 3300_000), completedAt: new Date(now.getTime() - 2700_000) },
-      { stepId: 'fix', agentId: 'it-ops-specialist', status: 'done', attempts: 2, output: 'Fixed connection leak, added pool health check', startedAt: new Date(now.getTime() - 2700_000), completedAt: new Date(now.getTime() - 1800_000) },
-      { stepId: 'verify', agentId: 'code-reviewer', status: 'done', attempts: 1, output: 'Fix verified, no regressions found', startedAt: new Date(now.getTime() - 1800_000), completedAt: new Date(now.getTime() - 1200_000) },
-      { stepId: 'review', agentId: 'code-reviewer', status: 'done', attempts: 1, output: 'PR approved, ready to merge', startedAt: new Date(now.getTime() - 1200_000), completedAt: new Date(now.getTime() - 600_000) },
-    ],
-    variables: { task: 'Production API returning 500 errors', root_cause: 'connection pool exhausted', severity: 'SEV-2' },
-    createdAt: new Date(now.getTime() - 3600_000),
-    updatedAt: new Date(now.getTime() - 600_000),
-    completedAt: new Date(now.getTime() - 600_000),
-  };
-  workflowRuns.set(run1.id, run1);
-
-  // Security audit — in progress
-  const run2: WorkflowRunRecord = {
-    id: nextWorkflowRunId(),
-    workflowId: 'security-audit',
-    workflowName: 'Security Audit Pipeline',
-    task: 'Quarterly security audit for payment microservices',
-    status: 'running',
-    steps: [
-      { stepId: 'scan', agentId: 'security-auditor', status: 'done', attempts: 1, output: 'Found 3 critical, 12 high, 28 medium vulnerabilities', startedAt: new Date(now.getTime() - 7200_000), completedAt: new Date(now.getTime() - 5400_000) },
-      { stepId: 'prioritize', agentId: 'security-auditor', status: 'done', attempts: 1, output: 'Prioritized: 3 critical CVEs for immediate fix', startedAt: new Date(now.getTime() - 5400_000), completedAt: new Date(now.getTime() - 4200_000) },
-      { stepId: 'fix', agentId: 'security-auditor', status: 'running', attempts: 1, startedAt: new Date(now.getTime() - 4200_000) },
-      { stepId: 'verify', agentId: 'code-reviewer', status: 'pending', attempts: 0 },
-      { stepId: 'test', agentId: 'code-reviewer', status: 'pending', attempts: 0 },
-      { stepId: 'report', agentId: 'code-reviewer', status: 'pending', attempts: 0 },
-    ],
-    variables: { task: 'Quarterly security audit', vulnerabilities_critical: '3', vulnerabilities_high: '12' },
-    createdAt: new Date(now.getTime() - 7200_000),
-    updatedAt: new Date(now.getTime() - 100_000),
-  };
-  workflowRuns.set(run2.id, run2);
-
-  // Change management — escalated
-  const run3: WorkflowRunRecord = {
-    id: nextWorkflowRunId(),
-    workflowId: 'change-management',
-    workflowName: 'Change Management Pipeline',
-    task: 'Upgrade Kubernetes cluster from 1.28 to 1.30',
-    status: 'escalated',
-    steps: [
-      { stepId: 'plan', agentId: 'it-ops-specialist', status: 'done', attempts: 1, output: 'Change plan created with rollback strategy', startedAt: new Date(now.getTime() - 86400_000), completedAt: new Date(now.getTime() - 82800_000) },
-      { stepId: 'implement', agentId: 'it-ops-specialist', status: 'done', attempts: 1, output: 'Control plane upgraded successfully', startedAt: new Date(now.getTime() - 82800_000), completedAt: new Date(now.getTime() - 79200_000) },
-      { stepId: 'security-scan', agentId: 'security-auditor', status: 'done', attempts: 1, output: 'No new vulnerabilities introduced', startedAt: new Date(now.getTime() - 79200_000), completedAt: new Date(now.getTime() - 75600_000) },
-      { stepId: 'review', agentId: 'code-reviewer', status: 'escalated', attempts: 3, error: 'Worker node drain failed on node-pool-3, requires manual intervention', startedAt: new Date(now.getTime() - 75600_000) },
-      { stepId: 'deploy', agentId: 'it-ops-specialist', status: 'pending', attempts: 0 },
-    ],
-    variables: { task: 'K8s upgrade 1.28→1.30', change_type: 'major', risk_level: 'high' },
-    createdAt: new Date(now.getTime() - 86400_000),
-    updatedAt: new Date(now.getTime() - 72000_000),
-  };
-  workflowRuns.set(run3.id, run3);
-}
-
-seedWorkflowRuns();

@@ -1,0 +1,287 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────
+
+enum UserRole {
+  admin
+  operator
+  viewer
+
+  @@map("user_role")
+}
+
+enum TenantPlan {
+  free
+  starter
+  pro
+  enterprise
+
+  @@map("tenant_plan")
+}
+
+enum ContractStatus {
+  pending
+  active
+  paused
+  review
+  completed
+  cancelled
+  disputed
+
+  @@map("contract_status")
+}
+
+enum MessageSenderType {
+  client
+  agent
+  system
+
+  @@map("message_sender_type")
+}
+
+enum WorkflowRunStatus {
+  pending
+  running
+  completed
+  failed
+  escalated
+  cancelled
+
+  @@map("workflow_run_status")
+}
+
+enum WorkflowStepStatus {
+  pending
+  running
+  done
+  retrying
+  failed
+  escalated
+  cancelled
+
+  @@map("workflow_step_status")
+}
+
+enum ApprovalStatus {
+  pending
+  granted
+  denied
+
+  @@map("approval_status")
+}
+
+enum ApprovalRisk {
+  low
+  medium
+  high
+
+  @@map("approval_risk")
+}
+
+enum AuditOutcome {
+  success
+  failure
+  pending
+
+  @@map("audit_outcome")
+}
+
+// ── Models ─────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  email        String    @unique
+  displayName  String
+  role         UserRole  @default(viewer)
+  passwordHash String
+  avatar       String?
+  active       Boolean   @default(true)
+  tenantId     String?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant            Tenant?           @relation("TenantMembers", fields: [tenantId], references: [id], onDelete: SetNull)
+  ownedTenants      Tenant[]          @relation("TenantOwner")
+  contracts         Contract[]        @relation("ContractClient")
+  resolvedApprovals ApprovalRequest[] @relation("ApprovalResolver")
+  auditEntries      AuditEntry[]      @relation("AuditActor")
+
+  @@map("users")
+}
+
+model Tenant {
+  id                 String     @id @default(cuid())
+  name               String
+  slug               String     @unique
+  industry           String     @default("")
+  plan               TenantPlan @default(free)
+  logo               String?
+  contactEmail       String
+  ownerId            String
+  maxActiveContracts Int        @default(1)
+  balance            Float      @default(0)
+  active             Boolean    @default(true)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  owner     User       @relation("TenantOwner", fields: [ownerId], references: [id])
+  members   User[]     @relation("TenantMembers")
+  contracts Contract[] @relation("TenantContracts")
+
+  @@map("tenants")
+}
+
+model Contract {
+  id             String         @id @default(cuid())
+  tenantId       String
+  agentId        String
+  clientUserId   String?
+  title          String
+  description    String         @default("")
+  specialty      String
+  status         ContractStatus @default(pending)
+  hourlyRate     Float          @default(0)
+  estimatedHours Float          @default(0)
+  actualHours    Float          @default(0)
+  totalCost      Float          @default(0)
+  rating         Float?
+  feedback       String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  tenant     Tenant              @relation("TenantContracts", fields: [tenantId], references: [id], onDelete: Cascade)
+  client     User?               @relation("ContractClient", fields: [clientUserId], references: [id], onDelete: SetNull)
+  milestones ContractMilestone[]
+  messages   ContractMessage[]
+
+  @@map("contracts")
+}
+
+model ContractMilestone {
+  id          String   @id @default(cuid())
+  contractId  String
+  title       String
+  description String   @default("")
+  dueDate     DateTime?
+  status      String   @default("pending")
+  amount      Float    @default(0)
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@map("contract_milestones")
+}
+
+model ContractMessage {
+  id         String            @id @default(cuid())
+  contractId String
+  senderId   String
+  senderType MessageSenderType
+  content    String
+  createdAt  DateTime          @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@map("contract_messages")
+}
+
+model WorkflowRun {
+  id              String            @id @default(cuid())
+  workflowId      String
+  workflowName    String
+  task            String
+  status          WorkflowRunStatus @default(pending)
+  variables       Json              @default("{}")
+  stepDefinitions Json              @default("{}")
+  executionLog    Json              @default("[]")
+  completedAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  steps WorkflowStepExecution[]
+
+  @@map("workflow_runs")
+}
+
+model WorkflowStepExecution {
+  id              String             @id @default(cuid())
+  runId           String
+  stepId          String
+  agentId         String
+  status          WorkflowStepStatus @default(pending)
+  attempts        Int                @default(0)
+  maxRetries      Int                @default(3)
+  idempotencyKey  String?
+  resolvedInput   String?
+  inputHash       String?
+  outputHash      String?
+  result          Json?
+  feedback        String?
+  output          String?
+  error           String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, stepId])
+  @@map("workflow_step_executions")
+}
+
+model AuditEntry {
+  id        String       @id @default(cuid())
+  timestamp DateTime     @default(now())
+  persona   String
+  sessionId String       @default("gui-session")
+  action    String
+  target    String?
+  outcome   AuditOutcome
+  details   Json?
+  approval  Json?
+  actorId   String?
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([persona])
+  @@index([outcome])
+  @@index([timestamp(sort: Desc)])
+  @@index([sessionId])
+  @@map("audit_entries")
+}
+
+model ApprovalRequest {
+  id           String         @id @default(cuid())
+  action       String
+  description  String
+  risk         ApprovalRisk
+  reversible   Boolean        @default(false)
+  context      Json
+  requestedAt  DateTime       @default(now())
+  expiresAt    DateTime?
+  status       ApprovalStatus @default(pending)
+  resolvedBy   String?
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  resolver User? @relation("ApprovalResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@map("approval_requests")
+}
