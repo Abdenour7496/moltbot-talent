@@ -17,6 +17,9 @@ export interface PersonaConfig {
   knowledgeBaseId?: string;
   /** Name of the Azure AI Search knowledge base attached to this persona (optional) */
   azureKnowledgeBaseId?: string;
+  /** Orgo action types this persona may invoke. Empty/absent = deny all.
+   *  Values: 'screenshot'|'click'|'drag'|'type'|'key'|'scroll'|'wait'|'bash'|'exec'|'prompt' */
+  allowedOrgoTools?: string[];
 }
 
 export interface LoadedPersona {
@@ -124,6 +127,10 @@ export interface AppSettings {
   // Orgo — Desktop Infrastructure for AI Agents
   orgoApiKey: string;
   orgoBaseUrl: string;
+  /** Hard cap on AI agent iterations per /prompt call (default 10, max 50) */
+  orgoMaxIterations: number;
+  /** When true, low-risk actions also require approval */
+  orgoStrictMode: boolean;
 }
 
 // ── Skills ─────────────────────────────────────────────────────────
@@ -472,8 +479,6 @@ export interface CronTask {
 
 export const personas: Map<string, LoadedPersona> = new Map();
 export const knowledgeBases: Map<string, KnowledgeBaseInfo> = new Map();
-export const approvals: Map<string, ApprovalRequest> = new Map();
-export const auditLog: AuditEntry[] = [];
 export const integrations: Map<string, IntegrationInfo> = new Map();
 export const sessions: Map<string, Session> = new Map();
 export const channels: Map<string, Channel> = new Map();
@@ -482,22 +487,18 @@ export const personaMessages: PersonaMessage[] = [];
 export const cronTasks: Map<string, CronTask> = new Map();
 export const brainConfigs: Map<string, BrainConfig> = new Map();
 export const skills: Map<string, Skill> = new Map();
-export const pairingCodes: Map<string, PairingCode> = new Map();
 export const usageRecords: UsageRecord[] = [];
 export const webhookEndpoints: Map<string, WebhookEndpoint> = new Map();
-export const users: Map<string, User> = new Map();
-export const tenants: Map<string, Tenant> = new Map();
 export const agentListings: Map<string, AgentListing> = new Map();
-export const contracts: Map<string, Contract> = new Map();
 export const orgoWorkspaces: Map<string, OrgoWorkspace> = new Map();
 export const orgoComputers: Map<string, OrgoComputer> = new Map();
 export const orgoTemplates: Map<string, OrgoTemplate> = new Map();
 export const orgoActions: OrgoComputerAction[] = [];
 
-// ── Workflow Runs ──────────────────────────────────────────────────
+// ── Workflow run types (kept for type compatibility) ───────────────
 
-export type WorkflowStepStatus = 'pending' | 'running' | 'done' | 'retrying' | 'failed' | 'escalated';
-export type WorkflowRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'escalated';
+export type WorkflowStepStatus = 'pending' | 'running' | 'done' | 'retrying' | 'failed' | 'escalated' | 'cancelled';
+export type WorkflowRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'escalated' | 'cancelled';
 
 export interface WorkflowStepExecution {
   stepId: string;
@@ -521,13 +522,6 @@ export interface WorkflowRunRecord {
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
-}
-
-export const workflowRuns: Map<string, WorkflowRunRecord> = new Map();
-
-let workflowRunCounter = 0;
-export function nextWorkflowRunId(): string {
-  return `wfr_${++workflowRunCounter}`;
 }
 
 export let securityConfig: SecurityConfig = {
@@ -577,30 +571,27 @@ export let settings: AppSettings = {
   // Orgo — Desktop Infrastructure for AI Agents
   orgoApiKey: process.env.ORGO_API_KEY ?? '',
   orgoBaseUrl: process.env.ORGO_BASE_URL ?? 'https://www.orgo.ai/api',
+  orgoMaxIterations: 10,
+  orgoStrictMode: false,
 };
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-let auditCounter = 0;
-
 export function addAuditEntry(
   entry: Omit<AuditEntry, 'id' | 'timestamp' | 'sessionId'>,
 ): AuditEntry {
-  const full: AuditEntry = {
-    ...entry,
-    id: `aud_${++auditCounter}`,
-    timestamp: new Date(),
-    sessionId: 'gui-session',
-  };
-  auditLog.push(full);
-  if (auditLog.length > 1000) auditLog.splice(0, auditLog.length - 1000);
-  return full;
-}
-
-let approvalCounter = 0;
-
-export function nextApprovalId(): string {
-  return `apr_${++approvalCounter}`;
+  prisma.auditEntry.create({
+    data: {
+      persona: entry.persona,
+      sessionId: 'gui-session',
+      action: entry.action,
+      target: entry.target,
+      outcome: entry.outcome as any,
+      details: entry.details as any ?? undefined,
+      approval: entry.approval as any ?? undefined,
+    },
+  }).catch((err: Error) => console.error('[audit]', err));
+  return { ...entry, id: 'aud_stub', timestamp: new Date(), sessionId: 'gui-session' };
 }
 
 let sessionCounter = 0;
@@ -653,29 +644,9 @@ export function nextWebhookId(): string {
   return `wh_${++webhookCounter}`;
 }
 
-let tenantCounter = 0;
-export function nextTenantId(): string {
-  return `ten_${++tenantCounter}`;
-}
-
 let agentListingCounter = 0;
 export function nextAgentListingId(): string {
   return `agt_${++agentListingCounter}`;
-}
-
-let contractCounter = 0;
-export function nextContractId(): string {
-  return `ctr_${++contractCounter}`;
-}
-
-let milestoneCounter = 0;
-export function nextMilestoneId(): string {
-  return `ms_${++milestoneCounter}`;
-}
-
-let contractMsgCounter = 0;
-export function nextContractMsgId(): string {
-  return `cmsg_${++contractMsgCounter}`;
 }
 
 let orgoWorkspaceCounter = 0;
@@ -702,7 +673,7 @@ export function nextOrgoActionId(): string {
 
 import { readdir, readFile, stat } from 'fs/promises';
 import { join, resolve, basename } from 'path';
-import { hashPassword } from './auth.js';
+import { prisma } from './db/index.js';
 
 /** Root personas directory (relative to project root) */
 export const PERSONAS_DIR = resolve(
@@ -789,6 +760,18 @@ async function seed() {
     console.log(`Auto-loaded ${loaded} persona(s) from ${PERSONAS_DIR}`);
   }
 
+  // Seed Orgo tool whitelists for known demo personas
+  const orgoToolsMap: Record<string, string[]> = {
+    'bug-triager': ['screenshot', 'bash', 'exec'],
+    'it-ops-specialist': ['screenshot', 'click', 'type', 'key', 'scroll', 'bash', 'exec', 'prompt'],
+    'code-reviewer': ['screenshot'],
+    'security-auditor': ['screenshot', 'bash', 'exec'],
+  };
+  for (const [personaId, tools] of Object.entries(orgoToolsMap)) {
+    const p = personas.get(personaId);
+    if (p) p.config.allowedOrgoTools = tools;
+  }
+
   // Seed brain configs for discovered personas
   for (const [personaId] of personas) {
     const brain: BrainConfig = {
@@ -870,19 +853,6 @@ async function seed() {
     connected: false,
     config: { botToken: '', signingSecret: '' },
   });
-
-  // Demo approval
-  const demoApproval: ApprovalRequest = {
-    id: nextApprovalId(),
-    action: 'restart_service',
-    description: 'Restart the payment-gateway service on prod-cluster-01',
-    risk: 'high',
-    reversible: true,
-    context: { service: 'payment-gateway', cluster: 'prod-cluster-01' },
-    requestedAt: new Date(Date.now() - 300_000),
-    status: 'pending',
-  };
-  approvals.set(demoApproval.id, demoApproval);
 
   // Demo session
   const sesId = nextSessionId();
@@ -1153,81 +1123,6 @@ async function seed() {
     });
   }
 
-  // Demo users
-  users.set('usr_1', {
-    id: 'usr_1',
-    username: 'admin',
-    email: 'admin@moltbot.local',
-    displayName: 'Administrator',
-    role: 'admin',
-    passwordHash: hashPassword('admin'),
-    active: true,
-    createdAt: new Date(),
-  });
-  users.set('usr_2', {
-    id: 'usr_2',
-    username: 'operator',
-    email: 'operator@moltbot.local',
-    displayName: 'Ops Operator',
-    role: 'operator',
-    passwordHash: hashPassword('operator'),
-    active: true,
-    tenantId: 'ten_1',
-    createdAt: new Date(),
-  });
-  users.set('usr_3', {
-    id: 'usr_3',
-    username: 'viewer',
-    email: 'viewer@moltbot.local',
-    displayName: 'Read Only',
-    role: 'viewer',
-    passwordHash: hashPassword('viewer'),
-    active: true,
-    tenantId: 'ten_2',
-    createdAt: new Date(),
-  });
-
-  // Demo tenants
-  tenants.set('ten_1', {
-    id: 'ten_1',
-    name: 'Acme Corp',
-    slug: 'acme-corp',
-    industry: 'FinTech',
-    plan: 'pro',
-    contactEmail: 'ops@acme-corp.io',
-    ownerId: 'usr_2',
-    maxActiveContracts: 10,
-    balance: 5000,
-    active: true,
-    createdAt: new Date(Date.now() - 30 * 86_400_000),
-  });
-  tenants.set('ten_2', {
-    id: 'ten_2',
-    name: 'Nebula Labs',
-    slug: 'nebula-labs',
-    industry: 'HealthTech',
-    plan: 'starter',
-    contactEmail: 'eng@nebula-labs.co',
-    ownerId: 'usr_3',
-    maxActiveContracts: 3,
-    balance: 1200,
-    active: true,
-    createdAt: new Date(Date.now() - 14 * 86_400_000),
-  });
-  tenants.set('ten_3', {
-    id: 'ten_3',
-    name: 'Quantum Dynamics',
-    slug: 'quantum-dynamics',
-    industry: 'Aerospace',
-    plan: 'enterprise',
-    contactEmail: 'devops@qdyn.space',
-    ownerId: 'usr_1',
-    maxActiveContracts: 50,
-    balance: 25000,
-    active: true,
-    createdAt: new Date(Date.now() - 90 * 86_400_000),
-  });
-
   // Demo agent listings (the freelancer marketplace)
   const agentSeeds: Omit<AgentListing, 'id' | 'createdAt'>[] = [
     {
@@ -1388,89 +1283,6 @@ async function seed() {
     const id = nextAgentListingId();
     agentListings.set(id, { ...seed, id, createdAt: new Date(Date.now() - Math.random() * 180 * 86_400_000) });
   }
-
-  // Demo contracts
-  const ctrId1 = nextContractId();
-  contracts.set(ctrId1, {
-    id: ctrId1,
-    tenantId: 'ten_1',
-    agentId: 'agt_3',
-    clientUserId: 'usr_2',
-    title: 'Real-time analytics pipeline',
-    description: 'Build a Kafka-to-Snowflake streaming pipeline for transaction analytics with dbt transformations.',
-    specialty: 'data-engineering',
-    status: 'active',
-    hourlyRate: 105,
-    estimatedHours: 80,
-    actualHours: 34,
-    totalCost: 3570,
-    milestones: [
-      { id: 'ms_1', title: 'Pipeline design & schema', description: 'Design data flow and target schema', status: 'completed', completedAt: new Date(Date.now() - 5 * 86_400_000), amount: 1050 },
-      { id: 'ms_2', title: 'Kafka ingestion layer', description: 'Set up Kafka topics and producers', status: 'in-progress', amount: 1260 },
-      { id: 'ms_3', title: 'dbt models & dashboards', description: 'Create transformation models and Snowflake dashboards', status: 'pending', amount: 1260 },
-    ],
-    messages: [
-      { id: 'cmsg_1', senderId: 'usr_2', senderType: 'client', content: 'Welcome aboard! Looking forward to working together.', timestamp: new Date(Date.now() - 7 * 86_400_000) },
-      { id: 'cmsg_2', senderId: 'agt_3', senderType: 'agent', content: 'Thanks! I\'ve reviewed the requirements. Starting with the schema design today.', timestamp: new Date(Date.now() - 7 * 86_400_000 + 3600_000) },
-      { id: 'cmsg_3', senderId: 'agt_3', senderType: 'agent', content: 'Milestone 1 completed. Schema ERD and pipeline architecture doc attached.', timestamp: new Date(Date.now() - 5 * 86_400_000) },
-    ],
-    startedAt: new Date(Date.now() - 7 * 86_400_000),
-    createdAt: new Date(Date.now() - 8 * 86_400_000),
-  });
-
-  const ctrId2 = nextContractId();
-  contracts.set(ctrId2, {
-    id: ctrId2,
-    tenantId: 'ten_3',
-    agentId: 'agt_7',
-    clientUserId: 'usr_1',
-    title: 'Multi-cloud migration strategy',
-    description: 'Design and execute migration of legacy on-prem workloads to a multi-cloud (AWS + Azure) architecture.',
-    specialty: 'cloud-architecture',
-    status: 'active',
-    hourlyRate: 130,
-    estimatedHours: 120,
-    actualHours: 56,
-    totalCost: 7280,
-    milestones: [
-      { id: 'ms_4', title: 'Discovery & assessment', description: 'Audit existing infrastructure and workloads', status: 'completed', completedAt: new Date(Date.now() - 14 * 86_400_000), amount: 2600 },
-      { id: 'ms_5', title: 'Architecture blueprint', description: 'Design target multi-cloud architecture', status: 'completed', completedAt: new Date(Date.now() - 7 * 86_400_000), amount: 2600 },
-      { id: 'ms_6', title: 'Migration execution', description: 'Execute phased migration with zero downtime', status: 'in-progress', amount: 3900 },
-    ],
-    messages: [
-      { id: 'cmsg_4', senderId: 'usr_1', senderType: 'client', content: 'Critical project — we need this done right. Happy to provide any access needed.', timestamp: new Date(Date.now() - 21 * 86_400_000) },
-      { id: 'cmsg_5', senderId: 'agt_7', senderType: 'agent', content: 'Understood. I\'ll need VPN access to the on-prem environment first.', timestamp: new Date(Date.now() - 21 * 86_400_000 + 1800_000) },
-    ],
-    startedAt: new Date(Date.now() - 21 * 86_400_000),
-    createdAt: new Date(Date.now() - 22 * 86_400_000),
-  });
-
-  const ctrId3 = nextContractId();
-  contracts.set(ctrId3, {
-    id: ctrId3,
-    tenantId: 'ten_1',
-    agentId: 'agt_4',
-    clientUserId: 'usr_2',
-    title: 'Customer portal redesign',
-    description: 'Redesign the customer-facing portal with React, improved UX, and full accessibility compliance.',
-    specialty: 'frontend',
-    status: 'completed',
-    hourlyRate: 85,
-    estimatedHours: 60,
-    actualHours: 55,
-    totalCost: 4675,
-    milestones: [
-      { id: 'ms_7', title: 'Design system setup', description: 'Create component library and design tokens', status: 'completed', completedAt: new Date(Date.now() - 30 * 86_400_000), amount: 1700 },
-      { id: 'ms_8', title: 'Core pages', description: 'Implement dashboard, profile, and settings', status: 'completed', completedAt: new Date(Date.now() - 20 * 86_400_000), amount: 1700 },
-      { id: 'ms_9', title: 'Accessibility audit', description: 'WCAG 2.1 AA compliance pass', status: 'completed', completedAt: new Date(Date.now() - 12 * 86_400_000), amount: 1275 },
-    ],
-    messages: [],
-    rating: 5,
-    feedback: 'Exceptional work! Delivered ahead of schedule with pixel-perfect implementation.',
-    startedAt: new Date(Date.now() - 40 * 86_400_000),
-    completedAt: new Date(Date.now() - 12 * 86_400_000),
-    createdAt: new Date(Date.now() - 42 * 86_400_000),
-  });
 
   // Demo security config
   securityConfig.channelAllowlists = {
