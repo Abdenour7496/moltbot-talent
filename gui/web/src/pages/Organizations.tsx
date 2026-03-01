@@ -5,8 +5,6 @@ import {
   Building2,
   Users,
   Briefcase,
-  DollarSign,
-  Crown,
   Plus,
   Pencil,
   Trash2,
@@ -15,10 +13,6 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
-  Shield,
-  Zap,
-  Rocket,
-  Globe,
 } from 'lucide-react';
 
 interface Tenant {
@@ -38,20 +32,6 @@ interface Tenant {
   members?: any[];
   contracts?: any[];
 }
-
-const planIcons: Record<string, typeof Shield> = {
-  free: Shield,
-  starter: Zap,
-  pro: Rocket,
-  enterprise: Globe,
-};
-
-const planColors: Record<string, string> = {
-  free: 'text-muted',
-  starter: 'text-blue-500',
-  pro: 'text-accent',
-  enterprise: 'text-yellow-500',
-};
 
 export function OrganizationsPage() {
   const { user: currentUser } = useAuth();
@@ -103,7 +83,7 @@ export function OrganizationsPage() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm('Delete this organization?')) return;
+    if (!confirm('Delete this department?')) return;
     await api.deleteTenant(id);
     load();
   };
@@ -145,7 +125,7 @@ export function OrganizationsPage() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted">
-            {isOrgUser ? 'Your organization' : `${tenants.length} organizations`}
+            {isOrgUser ? 'Your department' : `${tenants.length} departments`}
           </p>
         </div>
         {!isOrgUser && (
@@ -156,7 +136,7 @@ export function OrganizationsPage() {
             }}
             className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/90"
           >
-            <Plus className="h-4 w-4" /> New Organization
+            <Plus className="h-4 w-4" /> New Department
           </button>
         )}
       </div>
@@ -164,7 +144,6 @@ export function OrganizationsPage() {
       {/* Tenant cards */}
       <div className="space-y-3">
         {tenants.map((t) => {
-          const PlanIcon = planIcons[t.plan] ?? Shield;
           const isExpanded = expanded === t.id;
 
           return (
@@ -181,13 +160,7 @@ export function OrganizationsPage() {
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold truncate">{t.name}</h3>
-                    <span className={`inline-flex items-center gap-1 text-xs font-medium ${planColors[t.plan]}`}>
-                      <PlanIcon className="h-3 w-3" />
-                      {t.plan}
-                    </span>
-                  </div>
+                  <h3 className="font-semibold truncate">{t.name}</h3>
                   <p className="text-xs text-muted">{t.industry} &middot; {t.slug}</p>
                 </div>
 
@@ -199,10 +172,6 @@ export function OrganizationsPage() {
                   <span className="flex items-center gap-1">
                     <Briefcase className="h-3 w-3" />
                     {t.activeContracts ?? 0} active
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <DollarSign className="h-3 w-3" />
-                    ${t.balance?.toLocaleString()}
                   </span>
                 </div>
 
@@ -242,18 +211,14 @@ export function OrganizationsPage() {
               {isExpanded && detail && (
                 <div className="border-t border-border p-4 space-y-4">
                   {/* Info grid */}
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-xs">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 text-xs">
                     <div>
                       <div className="text-muted">Contact</div>
                       <div className="font-medium">{detail.contactEmail}</div>
                     </div>
                     <div>
-                      <div className="text-muted">Max Active Contracts</div>
+                      <div className="text-muted">Max Active Assignments</div>
                       <div className="font-medium">{detail.maxActiveContracts}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted">Balance</div>
-                      <div className="font-medium">${detail.balance?.toLocaleString()}</div>
                     </div>
                     <div>
                       <div className="text-muted">Status</div>
@@ -354,7 +319,7 @@ export function OrganizationsPage() {
 
       {tenants.length === 0 && (
         <div className="py-16 text-center text-sm text-muted">
-          No organizations yet.
+          No departments yet.
         </div>
       )}
 
@@ -363,7 +328,7 @@ export function OrganizationsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 space-y-4">
             <h2 className="text-lg font-semibold">
-              {showCreate ? 'New Organization' : 'Edit Organization'}
+              {showCreate ? 'New Department' : 'Edit Department'}
             </h2>
 
             <div className="space-y-3">
@@ -378,27 +343,13 @@ export function OrganizationsPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-sm font-medium">Industry</label>
+                <label className="text-sm font-medium">Type</label>
                 <input
                   value={form.industry}
                   onChange={(e) => setForm({ ...form, industry: e.target.value })}
-                  placeholder="Technology"
+                  placeholder="Engineering"
                   className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40"
                 />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Plan</label>
-                <select
-                  value={form.plan}
-                  onChange={(e) => setForm({ ...form, plan: e.target.value })}
-                  className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/40"
-                >
-                  <option value="free">Free</option>
-                  <option value="starter">Starter</option>
-                  <option value="pro">Pro</option>
-                  <option value="enterprise">Enterprise</option>
-                </select>
               </div>
 
               <div className="space-y-1">

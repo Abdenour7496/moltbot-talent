@@ -251,6 +251,13 @@ export const api = {
   resetUserPassword: (id: string, newPassword: string) =>
     request<any>(`/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify({ newPassword }) }),
 
+  // Agents (internal roster)
+  getAgents: (qs?: string) => request<any[]>(`/agents${qs || ''}`),
+  assignAgentToDept: (personaId: string, departmentId: string) =>
+    request<any>(`/agents/${personaId}/assign`, { method: 'POST', body: JSON.stringify({ departmentId }) }),
+  unassignAgentFromDept: (personaId: string, departmentId: string) =>
+    request<any>(`/agents/${personaId}/assign/${departmentId}`, { method: 'DELETE' }),
+
   // Marketplace
   getMarketplace: (qs?: string) => request<any[]>(`/marketplace${qs || ''}`),
   getMarketplaceStats: () => request<any>('/marketplace/stats'),

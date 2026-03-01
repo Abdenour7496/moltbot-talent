@@ -6,19 +6,13 @@ import {
   Building2,
   Users,
   Briefcase,
-  DollarSign,
   Bot,
   CheckCircle,
   Clock,
   Star,
-  TrendingUp,
   ShoppingBag,
   ArrowRight,
   Loader2,
-  Shield,
-  Zap,
-  Rocket,
-  Globe,
   Crown,
   Pencil,
   Save,
@@ -53,20 +47,6 @@ interface OrgPortalData {
   hiredAgents: any[];
   recentContracts: any[];
 }
-
-const planIcons: Record<string, typeof Shield> = {
-  free: Shield,
-  starter: Zap,
-  pro: Rocket,
-  enterprise: Globe,
-};
-
-const planColors: Record<string, string> = {
-  free: 'text-muted',
-  starter: 'text-blue-500',
-  pro: 'text-accent',
-  enterprise: 'text-yellow-500',
-};
 
 const statusStyles: Record<string, { bg: string; text: string }> = {
   active: { bg: 'bg-green-500/10', text: 'text-green-500' },
@@ -126,12 +106,12 @@ export function OrgPortalPage() {
     return (
       <div className="space-y-4 py-12 text-center">
         <Building2 className="mx-auto h-12 w-12 text-muted" />
-        <h2 className="text-lg font-semibold">No Organization</h2>
+        <h2 className="text-lg font-semibold">No Department</h2>
         <p className="text-sm text-muted max-w-md mx-auto">{error}</p>
         <p className="text-sm text-muted">
-          Create an organization from the{' '}
-          <Link to="/organizations" className="text-accent hover:underline">
-            Organizations
+          Create a department from the{' '}
+          <Link to="/departments" className="text-accent hover:underline">
+            Departments
           </Link>{' '}
           page, or ask your admin to add you to one.
         </p>
@@ -139,7 +119,7 @@ export function OrgPortalPage() {
           to="/register"
           className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/90"
         >
-          <Building2 className="h-4 w-4" /> Register as Organization
+          <Building2 className="h-4 w-4" /> Register as Department
         </Link>
       </div>
     );
@@ -148,7 +128,6 @@ export function OrgPortalPage() {
   if (!data) return null;
 
   const { tenant, stats, members, hiredAgents, recentContracts } = data;
-  const PlanIcon = planIcons[tenant.plan] ?? Shield;
   const isOwner = user?.id === tenant.ownerId;
 
   return (
@@ -199,13 +178,7 @@ export function OrgPortalPage() {
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-xl font-bold">{tenant.name}</h2>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${planColors[tenant.plan]}`}>
-                    <PlanIcon className="h-3 w-3" />
-                    {tenant.plan}
-                  </span>
-                </div>
+                <h2 className="text-xl font-bold">{tenant.name}</h2>
                 <p className="text-sm text-muted">
                   {tenant.industry} &middot; {tenant.slug}
                 </p>
@@ -222,22 +195,17 @@ export function OrgPortalPage() {
               <Pencil className="h-3 w-3" /> Edit
             </button>
           )}
-          <div className="flex items-center gap-1 text-sm font-semibold text-accent">
-            <DollarSign className="h-4 w-4" />
-            {stats.balance.toLocaleString()} credits
-          </div>
         </div>
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Hired Agents', value: stats.hiredAgents, icon: Bot, color: 'text-accent' },
-          { label: 'Active Contracts', value: stats.activeContracts, icon: Briefcase, color: 'text-green-500' },
+          { label: 'Assigned Agents', value: stats.hiredAgents, icon: Bot, color: 'text-accent' },
+          { label: 'Active Assignments', value: stats.activeContracts, icon: Briefcase, color: 'text-green-500' },
           { label: 'Completed', value: stats.completedContracts, icon: CheckCircle, color: 'text-accent' },
-          { label: 'Total Spend', value: `$${stats.totalSpend.toLocaleString()}`, icon: TrendingUp, color: 'text-yellow-500' },
           { label: 'Members', value: stats.memberCount, icon: Users, color: 'text-blue-500' },
-          { label: 'Contract Slots', value: `${stats.activeContracts}/${stats.maxActiveContracts}`, icon: Clock, color: 'text-muted' },
+          { label: 'Assignment Slots', value: `${stats.activeContracts}/${stats.maxActiveContracts}`, icon: Clock, color: 'text-muted' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div
             key={label}
@@ -258,7 +226,7 @@ export function OrgPortalPage() {
         <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <Bot className="h-4 w-4 text-accent" /> Active Agents
+              <Bot className="h-4 w-4 text-accent" /> Assigned Agents
             </h3>
             <Link
               to="/org/agents"
@@ -270,7 +238,7 @@ export function OrgPortalPage() {
           {hiredAgents.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
               <ShoppingBag className="mx-auto h-8 w-8 text-muted" />
-              <p className="mt-2 text-sm text-muted">No agents hired yet.</p>
+              <p className="mt-2 text-sm text-muted">No agents assigned yet.</p>
               <Link
                 to="/org/agents"
                 className="mt-3 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/90"

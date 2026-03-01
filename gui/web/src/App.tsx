@@ -25,7 +25,7 @@ import { GatewayPage } from './pages/Gateway';
 import { LoginPage } from './pages/Login';
 import { RegisterPage } from './pages/Register';
 import { UsersPage } from './pages/Users';
-import { MarketplacePage } from './pages/Marketplace';
+import { AgentsPage } from './pages/Agents';
 import { AgentConfigurePage } from './pages/AgentConfigure';
 import { ContractsPage } from './pages/Contracts';
 import { OrganizationsPage } from './pages/Organizations';
@@ -83,10 +83,12 @@ export default function App() {
             <Route path="workflows" element={<WorkflowDashboardPage />} />
             <Route path="gateway" element={<GatewayPage />} />
             <Route path="users" element={<UsersPage />} />
-            <Route path="marketplace" element={<MarketplacePage />} />
+            <Route path="agents" element={<AgentsPage />} />
+            <Route path="marketplace" element={<Navigate to="/agents" replace />} />
             <Route path="marketplace/:id/configure" element={<AgentConfigurePage />} />
             <Route path="contracts" element={<ContractsPage />} />
-            <Route path="organizations" element={<OrganizationsPage />} />
+            <Route path="departments" element={<OrganizationsPage />} />
+            <Route path="organizations" element={<Navigate to="/departments" replace />} />
             <Route path="org/portal" element={<OrgPortalPage />} />
             <Route path="org/agents" element={<OrgAgentsPage />} />
             <Route path="settings" element={<SettingsPage />} />

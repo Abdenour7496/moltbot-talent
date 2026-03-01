@@ -23,7 +23,7 @@ import {
   Globe,
   MessageCircle,
   UserCog,
-  Store,
+  Users2,
   FileSignature,
   Building2,
   HelpCircle,
@@ -52,16 +52,16 @@ const navGroups: NavGroup[] = [
     label: 'Overview',
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/marketplace', label: 'Marketplace', icon: Store },
-      { to: '/contracts', label: 'Contracts', icon: FileSignature },
+      { to: '/agents', label: 'Agents', icon: Users2 },
+      { to: '/contracts', label: 'Assignments', icon: FileSignature },
       { to: '/usage', label: 'Usage', icon: BarChart3 },
     ],
   },
   {
-    label: 'My Organization',
+    label: 'My Department',
     visibility: 'org',
     items: [
-      { to: '/org/portal', label: 'My Organization', icon: Building2 },
+      { to: '/org/portal', label: 'My Department', icon: Building2 },
       { to: '/org/agents', label: 'My Agents', icon: Bot },
     ],
   },
@@ -76,7 +76,7 @@ const navGroups: NavGroup[] = [
     label: 'Management',
     visibility: 'admin',
     items: [
-      { to: '/organizations', label: 'Organizations', icon: Building2 },
+      { to: '/departments', label: 'Departments', icon: Building2 },
       { to: '/personas', label: 'Personas', icon: Users },
       { to: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
       { to: '/skills', label: 'Skills', icon: Puzzle },
