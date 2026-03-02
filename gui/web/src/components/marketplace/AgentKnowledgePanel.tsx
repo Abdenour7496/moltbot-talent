@@ -4,6 +4,8 @@
  * Shown inside the AgentConfigure page. Displays the currently linked
  * knowledge base for a marketplace agent and lets the user:
  *   • Assign a local or Azure AI Search KB
+ *   • Configure Azure AI Search credentials inline (no env-var restart required)
+ *   • Enter an Azure index name manually as a fallback
  *   • Create a brand-new local KB and immediately link it
  *   • Detach the current KB
  */
@@ -27,6 +29,9 @@ import {
   Layers,
   RefreshCw,
   Cloud,
+  Settings2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface KbInfo {
@@ -38,6 +43,12 @@ interface KbInfo {
   provider: string;
   embeddingModel: string;
   type?: 'local' | 'azure';
+}
+
+interface AzureStatus {
+  configured: boolean;
+  endpoint: string | null;
+  apiVersion: string;
 }
 
 interface AgentKnowledgePanelProps {
@@ -55,18 +66,32 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
   const [mode, setMode] = useState<PanelMode>('view');
   const [pickTab, setPickTab] = useState<PickTab>('local');
 
-  // Local KBs
+  // ── Local KBs ────────────────────────────────────────────────────
   const [localKbs, setLocalKbs] = useState<KbInfo[]>([]);
   const [localKbsLoading, setLocalKbsLoading] = useState(false);
   const [selectedLocalId, setSelectedLocalId] = useState('');
 
-  // Azure KBs
+  // ── Azure KBs ────────────────────────────────────────────────────
+  const [azureStatus, setAzureStatus] = useState<AzureStatus | null>(null);
   const [azureKbs, setAzureKbs] = useState<any[]>([]);
   const [azureKbsLoading, setAzureKbsLoading] = useState(false);
   const [azureConfigured, setAzureConfigured] = useState<boolean | null>(null);
   const [selectedAzureId, setSelectedAzureId] = useState('');
 
-  // Create inline (local only)
+  // Azure connection form
+  const [azureConfigMode, setAzureConfigMode] = useState(false);
+  const [azureEndpoint, setAzureEndpoint] = useState('');
+  const [azureApiKey, setAzureApiKey] = useState('');
+  const [azureApiVersion, setAzureApiVersion] = useState('2025-11-01-preview');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [savingAzureConfig, setSavingAzureConfig] = useState(false);
+  const [azureConfigError, setAzureConfigError] = useState('');
+
+  // Manual index name
+  const [useManualIndex, setUseManualIndex] = useState(false);
+  const [manualIndexName, setManualIndexName] = useState('');
+
+  // ── Create inline (local only) ───────────────────────────────────
   const [newName, setNewName] = useState('');
   const [newDomain, setNewDomain] = useState('');
   const [creating, setCreating] = useState(false);
@@ -92,10 +117,11 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
     fetchCurrent();
   }, [fetchCurrent]);
 
-  /* Load KBs when picker opens */
+  /* Load KBs and Azure status when picker opens */
   useEffect(() => {
     if (mode !== 'pick') return;
 
+    // Local KBs
     setLocalKbsLoading(true);
     api.getKnowledgeBases()
       .then((kbs) => {
@@ -105,27 +131,83 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
       .catch(() => {})
       .finally(() => setLocalKbsLoading(false));
 
-    setAzureKbsLoading(true);
-    // Check Azure status first, then list
-    api.getAzureKnowledgeBases()
-      .then((kbs) => { setAzureKbs(kbs); setAzureConfigured(true); })
-      .catch(() => { setAzureConfigured(false); })
-      .finally(() => setAzureKbsLoading(false));
-
     // Pre-select current Azure KB tab if currently linked to Azure
     if (currentKb?.type === 'azure') {
       setPickTab('azure');
       setSelectedAzureId(currentKb.id);
     }
-  }, [mode, currentKb]);
+
+    // Azure: fetch status first, then list
+    loadAzureData();
+  }, [mode, currentKb]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadAzureData = async () => {
+    try {
+      const status = await api.getAzureStatus();
+      setAzureStatus(status);
+      setAzureConfigured(status.configured);
+
+      if (status.configured) {
+        setAzureKbsLoading(true);
+        try {
+          const kbs = await api.getAzureKnowledgeBases();
+          setAzureKbs(kbs);
+        } catch {
+          setAzureKbs([]);
+        } finally {
+          setAzureKbsLoading(false);
+        }
+      }
+    } catch {
+      setAzureConfigured(false);
+    }
+  };
+
+  /* Save Azure credentials and re-check */
+  const handleSaveAzureConfig = async () => {
+    if (!azureEndpoint.trim() || !azureApiKey.trim()) return;
+    setSavingAzureConfig(true);
+    setAzureConfigError('');
+    try {
+      await api.updateSettings({
+        azureSearchEndpoint: azureEndpoint.trim(),
+        azureSearchApiKey: azureApiKey.trim(),
+        ...(azureApiVersion.trim() && { azureSearchApiVersion: azureApiVersion.trim() }),
+      });
+
+      // Re-check status
+      const status = await api.getAzureStatus();
+      setAzureStatus(status);
+      setAzureConfigured(status.configured);
+      setAzureConfigMode(false);
+
+      // Try to list indexes
+      if (status.configured) {
+        setAzureKbsLoading(true);
+        try {
+          const kbs = await api.getAzureKnowledgeBases();
+          setAzureKbs(kbs);
+        } catch {
+          setAzureKbs([]);
+        } finally {
+          setAzureKbsLoading(false);
+        }
+      }
+    } catch (e: any) {
+      setAzureConfigError(e.message ?? 'Failed to save Azure configuration');
+    } finally {
+      setSavingAzureConfig(false);
+    }
+  };
 
   const handleAssign = async () => {
     setAssigning(true);
     setActionError('');
     try {
       if (pickTab === 'azure') {
-        if (!selectedAzureId) return;
-        const { knowledgeBase } = await api.assignAgentKnowledge(agentId, selectedAzureId, 'azure');
+        const indexId = useManualIndex ? manualIndexName.trim() : selectedAzureId;
+        if (!indexId) return;
+        const { knowledgeBase } = await api.assignAgentKnowledge(agentId, indexId, 'azure');
         setCurrentKb(knowledgeBase);
       } else {
         if (!selectedLocalId) return;
@@ -175,6 +257,10 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
     setMode('view');
     setSelectedLocalId('');
     setSelectedAzureId('');
+    setManualIndexName('');
+    setUseManualIndex(false);
+    setAzureConfigMode(false);
+    setAzureConfigError('');
     setNewName('');
     setNewDomain('');
     setActionError('');
@@ -183,18 +269,18 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
 
   const isAzure = currentKb?.type === 'azure' || currentKb?.provider === 'azure-search';
 
+  // Effective selection for Assign button
+  const effectiveAzureId = useManualIndex ? manualIndexName.trim() : selectedAzureId;
+  const canAssign = pickTab === 'azure' ? Boolean(effectiveAzureId) : Boolean(selectedLocalId);
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
         <div className="flex items-center gap-2">
           {isAzure ? <Cloud className="h-4 w-4 text-accent" /> : <Database className="h-4 w-4 text-accent" />}
           <CardTitle className="text-base">Knowledge Base</CardTitle>
-          {currentKb && (
-            <Badge variant="success" className="text-[10px]">Linked</Badge>
-          )}
-          {isAzure && (
-            <Badge variant="outline" className="text-[10px]">Azure AI Search</Badge>
-          )}
+          {currentKb && <Badge variant="success" className="text-[10px]">Linked</Badge>}
+          {isAzure && <Badge variant="outline" className="text-[10px]">Azure AI Search</Badge>}
         </div>
         <div className="flex items-center gap-2">
           {mode === 'view' && (
@@ -251,7 +337,9 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
                   <div>
                     <p className="font-medium text-sm">{currentKb.name}</p>
                     <p className="text-xs text-muted mt-0.5">
-                      {isAzure ? 'Azure AI Search index' : <>Domain: <span className="text-foreground">{currentKb.domain}</span></>}
+                      {isAzure
+                        ? <>Azure AI Search index{azureStatus?.endpoint ? <> · <span className="truncate max-w-[200px] inline-block align-bottom">{azureStatus.endpoint}</span></> : null}</>
+                        : <>Domain: <span className="text-foreground">{currentKb.domain}</span></>}
                     </p>
                   </div>
                   <Badge variant="outline" className="shrink-0 text-[10px]">
@@ -306,7 +394,7 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
                 <Database className="h-3 w-3" /> Local
               </button>
               <button
-                onClick={() => setPickTab('azure')}
+                onClick={() => { setPickTab('azure'); setAzureConfigMode(false); }}
                 className={`px-3 py-1.5 flex items-center gap-1.5 transition-colors ${
                   pickTab === 'azure' ? 'bg-accent text-accent-foreground' : 'text-muted hover:text-foreground'
                 }`}
@@ -315,7 +403,7 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
               </button>
             </div>
 
-            {/* Local KB list */}
+            {/* ── LOCAL tab ── */}
             {pickTab === 'local' && (
               <div className="space-y-2">
                 {localKbsLoading ? (
@@ -371,55 +459,199 @@ export function AgentKnowledgePanel({ agentId, agentName }: AgentKnowledgePanelP
               </div>
             )}
 
-            {/* Azure AI Search KB list */}
+            {/* ── AZURE tab ── */}
             {pickTab === 'azure' && (
-              <div className="space-y-2">
-                {azureKbsLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading Azure knowledge bases…
+              <div className="space-y-3">
+
+                {/* ── Connection form (shown when not configured OR reconfiguring) ── */}
+                {(azureConfigured === false || azureConfigMode) && (
+                  <div className="rounded-lg border border-border bg-card/60 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Cloud className="h-4 w-4 text-accent" />
+                      <p className="text-sm font-medium">
+                        {azureConfigMode ? 'Reconfigure Azure AI Search' : 'Connect Azure AI Search'}
+                      </p>
+                      {azureConfigMode && (
+                        <button
+                          onClick={() => { setAzureConfigMode(false); setAzureConfigError(''); }}
+                          className="ml-auto text-xs text-muted hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted">Endpoint URL</label>
+                      <Input
+                        placeholder="https://my-service.search.windows.net"
+                        value={azureEndpoint}
+                        onChange={(e) => setAzureEndpoint(e.target.value)}
+                        autoFocus={!azureConfigMode}
+                      />
+                      <p className="text-[10px] text-muted">Your Azure AI Search service URL from the Azure portal.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted">API Key</label>
+                      <div className="relative">
+                        <Input
+                          type={showApiKey ? 'text' : 'password'}
+                          placeholder="Admin or query API key"
+                          value={azureApiKey}
+                          onChange={(e) => setAzureApiKey(e.target.value)}
+                          className="pr-9"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+                          tabIndex={-1}
+                        >
+                          {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-muted">Found under Settings → Keys in your Azure Search resource.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted">API Version <span className="text-muted/60">(optional)</span></label>
+                      <Input
+                        placeholder="2025-11-01-preview"
+                        value={azureApiVersion}
+                        onChange={(e) => setAzureApiVersion(e.target.value)}
+                      />
+                    </div>
+
+                    {azureConfigError && (
+                      <p className="text-xs text-destructive flex items-center gap-1.5">
+                        <AlertCircle className="h-3 w-3 shrink-0" /> {azureConfigError}
+                      </p>
+                    )}
+
+                    <Button
+                      size="sm"
+                      onClick={handleSaveAzureConfig}
+                      disabled={!azureEndpoint.trim() || !azureApiKey.trim() || savingAzureConfig}
+                      className="w-full"
+                    >
+                      {savingAzureConfig
+                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Connecting…</>
+                        : <><Cloud className="h-3.5 w-3.5" /> Save & Connect</>}
+                    </Button>
                   </div>
-                ) : azureConfigured === false ? (
-                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 space-y-1">
-                    <p className="font-medium">Azure AI Search not configured</p>
-                    <p>Set <code>AZURE_SEARCH_ENDPOINT</code> and <code>AZURE_SEARCH_API_KEY</code> environment variables, then restart the API server.</p>
-                  </div>
-                ) : azureKbs.length === 0 ? (
-                  <p className="text-sm text-muted">No Azure AI Search knowledge bases found. Create one in the Knowledge Base page.</p>
-                ) : (
-                  <>
-                    <Select value={selectedAzureId} onChange={(e) => setSelectedAzureId(e.target.value)}>
-                      <option value="">— choose an Azure knowledge base —</option>
-                      {azureKbs.map((kb: any) => (
-                        <option key={kb.name ?? kb.id} value={kb.name ?? kb.id}>
-                          {kb.name ?? kb.id}{kb.description ? ` — ${kb.description}` : ''}
-                        </option>
-                      ))}
-                    </Select>
-                    {selectedAzureId && (
-                      <div className="rounded-md border border-accent/20 bg-accent/5 p-3 flex items-start gap-2 text-xs">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-accent mt-0.5 shrink-0" />
-                        <div>
-                          <p className="font-medium">{selectedAzureId}</p>
-                          <p className="text-muted">Azure AI Search · Foundry IQ</p>
-                        </div>
+                )}
+
+                {/* ── Configured: connection banner + index picker ── */}
+                {azureConfigured === true && !azureConfigMode && (
+                  <div className="space-y-3">
+                    {/* Connection status */}
+                    <div className="rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                        <span className="text-xs text-muted truncate">
+                          {azureStatus?.endpoint ?? 'Azure AI Search connected'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => { setAzureConfigMode(true); setAzureConfigError(''); }}
+                        className="flex items-center gap-1 text-xs text-accent hover:underline shrink-0"
+                      >
+                        <Settings2 className="h-3 w-3" /> Reconfigure
+                      </button>
+                    </div>
+
+                    {/* Index list */}
+                    {azureKbsLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-muted">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Loading indexes…
+                      </div>
+                    ) : azureKbs.length > 0 && !useManualIndex ? (
+                      <>
+                        <Select value={selectedAzureId} onChange={(e) => setSelectedAzureId(e.target.value)}>
+                          <option value="">— choose an Azure index —</option>
+                          {azureKbs.map((kb: any) => (
+                            <option key={kb.name ?? kb.id} value={kb.name ?? kb.id}>
+                              {kb.name ?? kb.id}{kb.description ? ` — ${kb.description}` : ''}
+                            </option>
+                          ))}
+                        </Select>
+                        {selectedAzureId && (
+                          <div className="rounded-md border border-accent/20 bg-accent/5 p-3 flex items-start gap-2 text-xs">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-accent mt-0.5 shrink-0" />
+                            <div>
+                              <p className="font-medium">{selectedAzureId}</p>
+                              <p className="text-muted">
+                                Azure AI Search · {azureStatus?.endpoint ?? 'configured'} · {azureStatus?.apiVersion}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+
+                    {/* Manual index name */}
+                    {(useManualIndex || (!azureKbsLoading && azureKbs.length === 0)) && (
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted">Index name</label>
+                        <Input
+                          placeholder="e.g. my-knowledge-index"
+                          value={manualIndexName}
+                          onChange={(e) => setManualIndexName(e.target.value)}
+                          autoFocus={useManualIndex}
+                        />
+                        {manualIndexName && (
+                          <div className="rounded-md border border-accent/20 bg-accent/5 p-3 flex items-start gap-2 text-xs mt-2">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-accent mt-0.5 shrink-0" />
+                            <div>
+                              <p className="font-medium">{manualIndexName}</p>
+                              <p className="text-muted">Azure AI Search · manual entry</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </>
+
+                    {/* Toggle between list and manual */}
+                    {!azureKbsLoading && (
+                      <div className="flex items-center gap-2 text-xs text-muted">
+                        {azureKbs.length === 0 && <span>No indexes found in listing.</span>}
+                        {azureKbs.length > 0 && (
+                          <button
+                            onClick={() => {
+                              setUseManualIndex(!useManualIndex);
+                              setSelectedAzureId('');
+                              setManualIndexName('');
+                            }}
+                            className="text-accent hover:underline"
+                          >
+                            {useManualIndex ? '← Pick from list' : 'Enter index name manually →'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Loading state before status is known */}
+                {azureConfigured === null && (
+                  <div className="flex items-center gap-2 text-sm text-muted">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Checking Azure connection…
+                  </div>
                 )}
               </div>
             )}
 
-            <div className="flex items-center gap-2 pt-1">
-              <Button
-                size="sm"
-                onClick={handleAssign}
-                disabled={(pickTab === 'local' ? !selectedLocalId : !selectedAzureId) || assigning}
-              >
-                {assigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
-                {assigning ? 'Assigning…' : 'Assign'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={cancelPicker}>Cancel</Button>
-            </div>
+            {/* Assign / Cancel */}
+            {!azureConfigMode && (
+              <div className="flex items-center gap-2 pt-1">
+                <Button size="sm" onClick={handleAssign} disabled={!canAssign || assigning}>
+                  {assigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                  {assigning ? 'Assigning…' : 'Assign'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={cancelPicker}>Cancel</Button>
+              </div>
+            )}
           </div>
         )}
 

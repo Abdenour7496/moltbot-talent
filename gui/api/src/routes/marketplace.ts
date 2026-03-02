@@ -1,20 +1,56 @@
 import { Router } from 'express';
 import {
   agentListings,
-  contracts,
   integrations,
   knowledgeBases,
   personas,
-  users,
   nextAgentListingId,
-  nextContractId,
-  nextMilestoneId,
   addAuditEntry,
   type AgentListing,
   type AgentSpecialty,
-  type Contract,
   type LoadedPersona,
 } from '../state.js';
+import { prisma, logAudit } from '../db/index.js';
+
+// ── Persona ↔ AgentListing bridge ───────────────────────────────────
+// Allows persona IDs to be used wherever a marketplace agent ID is expected.
+
+function personaToListing(p: LoadedPersona): AgentListing {
+  return {
+    id: p.config.id,
+    name: p.config.name,
+    title: p.config.title ?? `${p.config.name} Specialist`,
+    specialty: (p.config.specialty as AgentSpecialty) ?? 'backend',
+    tags: p.config.tags ?? [],
+    description: p.config.description ?? (p.soul?.slice(0, 300).replace(/\n/g, ' ').trim() ?? ''),
+    hourlyRate: p.config.hourlyRate ?? 100,
+    rating: 5.0,
+    completedJobs: 0,
+    successRate: 100,
+    availability: 'available',
+    personaId: p.config.id,
+    skills: p.config.skills ?? [],
+    languages: p.config.languages ?? ['English'],
+    certifications: p.config.certifications ?? [],
+    soul: p.soul,
+    expertise: p.expertise,
+    procedures: p.procedures,
+    tools: p.tools,
+    knowledgeBaseId: p.config.knowledgeBaseId,
+    azureKnowledgeBaseId: p.config.azureKnowledgeBaseId,
+    integrations: p.config.integrations,
+    createdAt: p.loadedAt,
+  };
+}
+
+/** Returns the marketplace listing OR a persona-derived listing. Returns null if neither found. */
+function resolveAgent(id: string): { agent: AgentListing; isPersona: boolean } | null {
+  const listing = agentListings.get(id);
+  if (listing) return { agent: listing, isPersona: false };
+  const persona = personas.get(id);
+  if (persona) return { agent: personaToListing(persona), isPersona: true };
+  return null;
+}
 
 const router = Router();
 
@@ -64,28 +100,33 @@ router.get('/specialties', (_req, res) => {
 
 // ── GET /api/marketplace/stats ──────────────────────────────────────
 
-router.get('/stats', (req, res) => {
-  const caller = users.get((req as any).userId);
+router.get('/stats', async (req, res) => {
+  const caller = await prisma.user.findUnique({
+    where: { id: (req as any).userId },
+    select: { tenantId: true },
+  });
   const orgTenantId = caller?.tenantId;
   const all = [...agentListings.values()];
-  let scopedContracts = [...contracts.values()];
 
-  // Org users only see stats for their own org
-  if (orgTenantId) {
-    scopedContracts = scopedContracts.filter((c) => c.tenantId === orgTenantId);
-  }
+  const [totalContracts, activeContracts, completedContracts, revenueAgg] = await Promise.all([
+    prisma.contract.count({ where: orgTenantId ? { tenantId: orgTenantId } : undefined }),
+    prisma.contract.count({ where: { status: 'active', ...(orgTenantId && { tenantId: orgTenantId }) } }),
+    prisma.contract.count({ where: { status: 'completed', ...(orgTenantId && { tenantId: orgTenantId }) } }),
+    prisma.contract.aggregate({
+      _sum: { totalCost: true },
+      where: orgTenantId ? { tenantId: orgTenantId } : undefined,
+    }),
+  ]);
 
   res.json({
     totalAgents: all.length,
     availableAgents: all.filter((a) => a.availability === 'available').length,
-    hiredAgents: orgTenantId
-      ? scopedContracts.filter((c) => c.status === 'active').length
-      : all.filter((a) => a.availability === 'hired').length,
+    hiredAgents: orgTenantId ? activeContracts : all.filter((a) => a.availability === 'hired').length,
     avgRating: +(all.reduce((s, a) => s + a.rating, 0) / (all.length || 1)).toFixed(1),
-    totalContracts: scopedContracts.length,
-    activeContracts: scopedContracts.filter((c) => c.status === 'active').length,
-    completedContracts: scopedContracts.filter((c) => c.status === 'completed').length,
-    totalRevenue: scopedContracts.reduce((s, c) => s + c.totalCost, 0),
+    totalContracts,
+    activeContracts,
+    completedContracts,
+    totalRevenue: revenueAgg._sum.totalCost ?? 0,
   });
 });
 
@@ -194,61 +235,94 @@ router.post('/from-persona', (req, res) => {
 // ── GET /api/marketplace/:id ────────────────────────────────────────
 
 router.get('/:id', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
-  res.json(agent);
+  const resolved = resolveAgent(req.params.id);
+  if (!resolved) { res.status(404).json({ error: 'Agent not found' }); return; }
+  res.json(resolved.agent);
 });
 
 // ── PUT /api/marketplace/:id/config ─────────────────────────────────
 // Update soul/expertise/procedures/tools and profile fields
 
 router.put('/:id/config', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
-
   const { soul, expertise, procedures, tools, name, title, specialty, hourlyRate, description, skills, languages, certifications, tags } = req.body;
-  if (soul !== undefined) agent.soul = soul;
-  if (expertise !== undefined) agent.expertise = expertise;
-  if (procedures !== undefined) agent.procedures = procedures;
-  if (tools !== undefined) agent.tools = tools;
-  if (name !== undefined) agent.name = name;
-  if (title !== undefined) agent.title = title;
-  if (specialty !== undefined) agent.specialty = specialty;
-  if (hourlyRate !== undefined) agent.hourlyRate = hourlyRate;
-  if (description !== undefined) agent.description = description;
-  if (skills !== undefined) agent.skills = skills;
-  if (languages !== undefined) agent.languages = languages;
-  if (certifications !== undefined) agent.certifications = certifications;
-  if (tags !== undefined) agent.tags = tags;
+
+  // ── Marketplace listing path ─────────────────────────────────────
+  const listing = agentListings.get(req.params.id);
+  if (listing) {
+    if (soul !== undefined) listing.soul = soul;
+    if (expertise !== undefined) listing.expertise = expertise;
+    if (procedures !== undefined) listing.procedures = procedures;
+    if (tools !== undefined) listing.tools = tools;
+    if (name !== undefined) listing.name = name;
+    if (title !== undefined) listing.title = title;
+    if (specialty !== undefined) listing.specialty = specialty;
+    if (hourlyRate !== undefined) listing.hourlyRate = hourlyRate;
+    if (description !== undefined) listing.description = description;
+    if (skills !== undefined) listing.skills = skills;
+    if (languages !== undefined) listing.languages = languages;
+    if (certifications !== undefined) listing.certifications = certifications;
+    if (tags !== undefined) listing.tags = tags;
+
+    addAuditEntry({
+      persona: listing.personaId ?? 'marketplace',
+      action: 'agent_config_updated',
+      outcome: 'success',
+      details: { agentId: listing.id, agentName: listing.name },
+    });
+
+    res.json(listing);
+    return;
+  }
+
+  // ── Persona fallback path ────────────────────────────────────────
+  const persona = personas.get(req.params.id);
+  if (!persona) { res.status(404).json({ error: 'Agent not found' }); return; }
+
+  if (soul !== undefined) persona.soul = soul;
+  if (expertise !== undefined) persona.expertise = expertise;
+  if (procedures !== undefined) persona.procedures = procedures;
+  if (tools !== undefined) persona.tools = tools;
+  if (name !== undefined) persona.config.name = name;
+  if (title !== undefined) persona.config.title = title;
+  if (specialty !== undefined) persona.config.specialty = specialty;
+  if (hourlyRate !== undefined) persona.config.hourlyRate = Number(hourlyRate);
+  if (description !== undefined) persona.config.description = description;
+  if (skills !== undefined) persona.config.skills = skills;
+  if (languages !== undefined) persona.config.languages = languages;
+  if (certifications !== undefined) persona.config.certifications = certifications;
+  if (tags !== undefined) persona.config.tags = tags;
 
   addAuditEntry({
-    persona: agent.personaId ?? 'marketplace',
+    persona: persona.config.id,
     action: 'agent_config_updated',
     outcome: 'success',
-    details: { agentId: agent.id, agentName: agent.name },
+    details: { agentId: persona.config.id, agentName: persona.config.name },
   });
 
-  res.json(agent);
+  res.json(personaToListing(persona));
 });
 
 // ── GET /api/marketplace/:id/knowledge ──────────────────────────────
 
 router.get('/:id/knowledge', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const resolved = resolveAgent(req.params.id);
+  if (!resolved) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const { agent } = resolved;
 
   if (agent.azureKnowledgeBaseId) {
-    const azureKb = {
-      id: agent.azureKnowledgeBaseId,
-      name: agent.azureKnowledgeBaseId,
-      domain: 'azure-search',
-      provider: 'azure-search',
-      embeddingModel: 'Azure AI',
-      documentCount: 0,
-      chunkCount: 0,
-      type: 'azure',
-    };
-    res.json({ knowledgeBase: azureKb, kbType: 'azure' });
+    res.json({
+      knowledgeBase: {
+        id: agent.azureKnowledgeBaseId,
+        name: agent.azureKnowledgeBaseId,
+        domain: 'azure-search',
+        provider: 'azure-search',
+        embeddingModel: 'Azure AI',
+        documentCount: 0,
+        chunkCount: 0,
+        type: 'azure',
+      },
+      kbType: 'azure',
+    });
     return;
   }
 
@@ -259,29 +333,23 @@ router.get('/:id/knowledge', (req, res) => {
 // ── POST /api/marketplace/:id/knowledge ─────────────────────────────
 
 router.post('/:id/knowledge', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
-
   const { kbId, kbType } = req.body;
   if (!kbId) { res.status(400).json({ error: 'kbId is required' }); return; }
 
+  // Helper to write KB assignment back to the right store
+  const persona = personas.get(req.params.id);
+  const listing = agentListings.get(req.params.id);
+  if (!listing && !persona) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const agentId = listing ? listing.id : persona!.config.id;
+  const personaId = listing ? (listing.personaId ?? 'marketplace') : persona!.config.id;
+
   if (kbType === 'azure') {
-    agent.azureKnowledgeBaseId = kbId;
-    agent.knowledgeBaseId = undefined;
+    if (listing) { listing.azureKnowledgeBaseId = kbId; listing.knowledgeBaseId = undefined; }
+    else { persona!.config.azureKnowledgeBaseId = kbId; persona!.config.knowledgeBaseId = undefined; }
 
-    addAuditEntry({
-      persona: agent.personaId ?? 'marketplace',
-      action: 'agent_knowledge_assigned',
-      outcome: 'success',
-      details: { agentId: agent.id, kbId, kbType: 'azure' },
-    });
-
+    addAuditEntry({ persona: personaId, action: 'agent_knowledge_assigned', outcome: 'success', details: { agentId, kbId, kbType: 'azure' } });
     res.json({
-      knowledgeBase: {
-        id: kbId, name: kbId, domain: 'azure-search',
-        provider: 'azure-search', embeddingModel: 'Azure AI',
-        documentCount: 0, chunkCount: 0, type: 'azure',
-      },
+      knowledgeBase: { id: kbId, name: kbId, domain: 'azure-search', provider: 'azure-search', embeddingModel: 'Azure AI', documentCount: 0, chunkCount: 0, type: 'azure' },
       kbType: 'azure',
     });
     return;
@@ -290,33 +358,28 @@ router.post('/:id/knowledge', (req, res) => {
   const kb = knowledgeBases.get(kbId);
   if (!kb) { res.status(404).json({ error: 'Knowledge base not found' }); return; }
 
-  agent.knowledgeBaseId = kbId;
-  agent.azureKnowledgeBaseId = undefined;
+  if (listing) { listing.knowledgeBaseId = kbId; listing.azureKnowledgeBaseId = undefined; }
+  else { persona!.config.knowledgeBaseId = kbId; persona!.config.azureKnowledgeBaseId = undefined; }
 
-  addAuditEntry({
-    persona: agent.personaId ?? 'marketplace',
-    action: 'agent_knowledge_assigned',
-    outcome: 'success',
-    details: { agentId: agent.id, kbId, kbName: kb.name },
-  });
-
+  addAuditEntry({ persona: personaId, action: 'agent_knowledge_assigned', outcome: 'success', details: { agentId, kbId, kbName: kb.name } });
   res.json({ knowledgeBase: { ...kb, type: 'local' }, kbType: 'local' });
 });
 
 // ── DELETE /api/marketplace/:id/knowledge ───────────────────────────
 
 router.delete('/:id/knowledge', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const listing = agentListings.get(req.params.id);
+  const persona = personas.get(req.params.id);
+  if (!listing && !persona) { res.status(404).json({ error: 'Agent not found' }); return; }
 
-  agent.knowledgeBaseId = undefined;
-  agent.azureKnowledgeBaseId = undefined;
+  if (listing) { listing.knowledgeBaseId = undefined; listing.azureKnowledgeBaseId = undefined; }
+  else { persona!.config.knowledgeBaseId = undefined; persona!.config.azureKnowledgeBaseId = undefined; }
 
   addAuditEntry({
-    persona: agent.personaId ?? 'marketplace',
+    persona: listing ? (listing.personaId ?? 'marketplace') : persona!.config.id,
     action: 'agent_knowledge_detached',
     outcome: 'success',
-    details: { agentId: agent.id },
+    details: { agentId: listing ? listing.id : persona!.config.id },
   });
 
   res.json({ detached: true });
@@ -325,19 +388,19 @@ router.delete('/:id/knowledge', (req, res) => {
 // ── GET /api/marketplace/:id/integrations ───────────────────────────
 
 router.get('/:id/integrations', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const resolved = resolveAgent(req.params.id);
+  if (!resolved) { res.status(404).json({ error: 'Agent not found' }); return; }
 
-  const ids = agent.integrations ?? [];
-  const result = ids.map((iid) => integrations.get(iid)).filter(Boolean);
-  res.json(result);
+  const ids = resolved.agent.integrations ?? [];
+  res.json(ids.map((iid) => integrations.get(iid)).filter(Boolean));
 });
 
 // ── POST /api/marketplace/:id/integrations ──────────────────────────
 
 router.post('/:id/integrations', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const listing = agentListings.get(req.params.id);
+  const persona = personas.get(req.params.id);
+  if (!listing && !persona) { res.status(404).json({ error: 'Agent not found' }); return; }
 
   const { integrationId } = req.body as { integrationId: string };
   if (!integrationId) { res.status(400).json({ error: 'integrationId is required' }); return; }
@@ -345,38 +408,40 @@ router.post('/:id/integrations', (req, res) => {
   const integration = integrations.get(integrationId);
   if (!integration) { res.status(404).json({ error: 'Integration not found' }); return; }
 
-  const current = agent.integrations ?? [];
-  if (!current.includes(integrationId)) {
-    agent.integrations = [...current, integrationId];
+  const agentId = listing ? listing.id : persona!.config.id;
+  const personaId = listing ? (listing.personaId ?? 'marketplace') : persona!.config.id;
+
+  if (listing) {
+    const current = listing.integrations ?? [];
+    if (!current.includes(integrationId)) listing.integrations = [...current, integrationId];
+  } else {
+    const current = persona!.config.integrations ?? [];
+    if (!current.includes(integrationId)) persona!.config.integrations = [...current, integrationId];
   }
 
-  addAuditEntry({
-    persona: agent.personaId ?? 'marketplace',
-    action: 'agent_integration_assigned',
-    target: integrationId,
-    outcome: 'success',
-    details: { agentId: agent.id, integrationName: integration.name, integrationType: integration.type },
-  });
-
+  addAuditEntry({ persona: personaId, action: 'agent_integration_assigned', target: integrationId, outcome: 'success', details: { agentId, integrationName: integration.name, integrationType: integration.type } });
   res.json(integration);
 });
 
 // ── DELETE /api/marketplace/:id/integrations/:integrationId ─────────
 
 router.delete('/:id/integrations/:integrationId', (req, res) => {
-  const agent = agentListings.get(req.params.id);
-  if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+  const listing = agentListings.get(req.params.id);
+  const persona = personas.get(req.params.id);
+  if (!listing && !persona) { res.status(404).json({ error: 'Agent not found' }); return; }
 
-  agent.integrations = (agent.integrations ?? []).filter(
-    (iid) => iid !== req.params.integrationId,
-  );
+  if (listing) {
+    listing.integrations = (listing.integrations ?? []).filter((iid) => iid !== req.params.integrationId);
+  } else {
+    persona!.config.integrations = (persona!.config.integrations ?? []).filter((iid) => iid !== req.params.integrationId);
+  }
 
   addAuditEntry({
-    persona: agent.personaId ?? 'marketplace',
+    persona: listing ? (listing.personaId ?? 'marketplace') : persona!.config.id,
     action: 'agent_integration_removed',
     target: req.params.integrationId,
     outcome: 'success',
-    details: { agentId: agent.id },
+    details: { agentId: listing ? listing.id : persona!.config.id },
   });
 
   res.json({ removed: true });
@@ -424,7 +489,7 @@ router.post('/:id/chat', (req, res) => {
 // ── POST /api/marketplace/:id/hire ──────────────────────────────────
 // Initiate hiring — creates a new contract
 
-router.post('/:id/hire', (req, res) => {
+router.post('/:id/hire', async (req, res) => {
   const agent = agentListings.get(req.params.id);
   if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
   if (agent.availability !== 'available') {
@@ -433,7 +498,10 @@ router.post('/:id/hire', (req, res) => {
   }
 
   // Auto-resolve tenantId from the caller's org if they are an org user
-  const caller = users.get((req as any).userId);
+  const caller = await prisma.user.findUnique({
+    where: { id: (req as any).userId },
+    select: { tenantId: true },
+  });
   const callerTenantId = caller?.tenantId;
 
   const {
@@ -456,55 +524,53 @@ router.post('/:id/hire', (req, res) => {
     return;
   }
 
-  const contractId = nextContractId();
-  const milestones = (milestonesRaw ?? []).map((m: any) => ({
-    id: nextMilestoneId(),
-    title: m.title ?? 'Milestone',
-    description: m.description ?? '',
-    dueDate: m.dueDate ? new Date(m.dueDate) : undefined,
-    status: 'pending' as const,
-    amount: m.amount ?? 0,
-  }));
-
-  const contract: Contract = {
-    id: contractId,
-    tenantId,
-    agentId: agent.id,
-    clientUserId: (req as any).userId,
-    title,
-    description: description ?? '',
-    specialty: agent.specialty,
-    status: 'active',
-    hourlyRate: agent.hourlyRate,
-    estimatedHours: Number(estimatedHours),
-    actualHours: 0,
-    totalCost: 0,
-    milestones,
-    messages: [
-      {
-        id: `cmsg_${Date.now()}`,
-        senderId: 'system',
-        senderType: 'system' as const,
-        content: `Contract created. ${agent.name} has been hired for "${title}".`,
-        timestamp: new Date(),
+  const contract = await prisma.contract.create({
+    data: {
+      tenantId,
+      agentId: agent.id,
+      clientUserId: (req as any).userId,
+      title,
+      description: description ?? '',
+      specialty: agent.specialty,
+      status: 'active',
+      hourlyRate: agent.hourlyRate,
+      estimatedHours: Number(estimatedHours),
+      actualHours: 0,
+      totalCost: 0,
+      startedAt: new Date(),
+      milestones: {
+        create: (milestonesRaw ?? []).map((m: any) => ({
+          title: m.title ?? 'Milestone',
+          description: m.description ?? '',
+          dueDate: m.dueDate ? new Date(m.dueDate) : undefined,
+          status: 'pending',
+          amount: m.amount ?? 0,
+        })),
       },
-    ],
-    startedAt: new Date(),
-    createdAt: new Date(),
-  };
+      messages: {
+        create: [{
+          senderId: 'system',
+          senderType: 'system',
+          content: `Contract created. ${agent.name} has been hired for "${title}".`,
+        }],
+      },
+    },
+    include: {
+      milestones: true,
+      messages: true,
+    },
+  });
 
-  contracts.set(contractId, contract);
-
-  // Mark agent as hired
+  // Mark agent as hired (still in-memory)
   agent.availability = 'hired';
-  agent.currentContractId = contractId;
+  agent.currentContractId = contract.id;
 
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'agent_hired',
     outcome: 'success',
     details: {
-      contractId,
+      contractId: contract.id,
       agentId: agent.id,
       agentName: agent.name,
       tenantId,

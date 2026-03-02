@@ -23,6 +23,14 @@ export interface PersonaConfig {
   /** IDs of departments this persona is assigned to.
    *  Empty/absent = visible to admins only. */
   departmentIds?: string[];
+  /** Agent profile fields — persisted when configuring a persona as an agent */
+  title?: string;
+  specialty?: string;
+  hourlyRate?: number;
+  description?: string;
+  tags?: string[];
+  languages?: string[];
+  certifications?: string[];
 }
 
 export interface LoadedPersona {

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireRole, hashPassword } from '../auth.js';
-import { users, addAuditEntry } from '../state.js';
+import { prisma, logAudit } from '../db/index.js';
 
 const router = Router();
 
@@ -9,109 +9,165 @@ router.use(requireRole('admin'));
 
 // ── GET /api/users ──────────────────────────────────────────────────
 
-router.get('/', (_req, res) => {
-  const list = [...users.values()].map(({ passwordHash, ...u }) => u);
-  res.json(list);
+router.get('/', async (_req, res) => {
+  const users = await prisma.user.findMany({
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      displayName: true,
+      role: true,
+      avatar: true,
+      active: true,
+      tenantId: true,
+      lastLoginAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+  res.json(users);
 });
 
 // ── GET /api/users/:id ─────────────────────────────────────────────
 
-router.get('/:id', (req, res) => {
-  const user = users.get(req.params.id);
+router.get('/:id', async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.params.id },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      displayName: true,
+      role: true,
+      avatar: true,
+      active: true,
+      tenantId: true,
+      lastLoginAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
-  const { passwordHash, ...safeUser } = user;
-  res.json(safeUser);
+  res.json(user);
 });
 
 // ── POST /api/users  (create by admin) ─────────────────────────────
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { username, email, displayName, password, role } = req.body;
   if (!username || !email || !password) {
     res.status(400).json({ error: 'Username, email, and password are required' });
     return;
   }
 
-  const existing = [...users.values()].find(
-    (u) => u.username === username || u.email === email,
-  );
+  const existing = await prisma.user.findFirst({
+    where: { OR: [{ username }, { email }] },
+  });
   if (existing) {
     res.status(409).json({ error: 'Username or email already taken' });
     return;
   }
 
-  const id = `usr_${Date.now()}`;
-  const user = {
-    id,
-    username,
-    email,
-    displayName: displayName || username,
-    role: (role ?? 'viewer') as 'admin' | 'operator' | 'viewer',
-    passwordHash: hashPassword(password),
-    active: true,
-    createdAt: new Date(),
-  };
+  const user = await prisma.user.create({
+    data: {
+      username,
+      email,
+      displayName: displayName || username,
+      role: (role ?? 'viewer') as any,
+      passwordHash: hashPassword(password),
+      active: true,
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      displayName: true,
+      role: true,
+      avatar: true,
+      active: true,
+      tenantId: true,
+      lastLoginAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
 
-  users.set(id, user);
-
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'user_created',
     outcome: 'success',
-    details: { userId: id, username, createdBy: (req as any).userId },
+    details: { userId: user.id, username, createdBy: (req as any).userId },
   });
 
-  const { passwordHash: _, ...safeUser } = user;
-  res.status(201).json(safeUser);
+  res.status(201).json(user);
 });
 
 // ── PUT /api/users/:id ─────────────────────────────────────────────
 
-router.put('/:id', (req, res) => {
-  const user = users.get(req.params.id);
-  if (!user) {
+router.put('/:id', async (req, res) => {
+  const exists = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!exists) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
 
   const { role, active, displayName, email } = req.body;
-  if (role !== undefined) user.role = role;
-  if (active !== undefined) user.active = active;
-  if (displayName !== undefined) user.displayName = displayName;
-  if (email !== undefined) user.email = email;
+  const user = await prisma.user.update({
+    where: { id: req.params.id },
+    data: {
+      ...(role !== undefined && { role }),
+      ...(active !== undefined && { active }),
+      ...(displayName !== undefined && { displayName }),
+      ...(email !== undefined && { email }),
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      displayName: true,
+      role: true,
+      avatar: true,
+      active: true,
+      tenantId: true,
+      lastLoginAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
 
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'user_updated',
     outcome: 'success',
     details: { userId: user.id, changes: req.body, updatedBy: (req as any).userId },
   });
 
-  const { passwordHash, ...safeUser } = user;
-  res.json(safeUser);
+  res.json(user);
 });
 
 // ── DELETE /api/users/:id ───────────────────────────────────────────
 
-router.delete('/:id', (req, res) => {
-  const user = users.get(req.params.id);
+router.delete('/:id', async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, username: true },
+  });
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
 
-  // Prevent self-deletion
   if (user.id === (req as any).userId) {
     res.status(400).json({ error: 'Cannot delete your own account' });
     return;
   }
 
-  users.delete(req.params.id);
+  await prisma.user.delete({ where: { id: req.params.id } });
 
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'user_deleted',
     outcome: 'success',
@@ -123,8 +179,8 @@ router.delete('/:id', (req, res) => {
 
 // ── POST /api/users/:id/reset-password ──────────────────────────────
 
-router.post('/:id/reset-password', (req, res) => {
-  const user = users.get(req.params.id);
+router.post('/:id/reset-password', async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true } });
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
@@ -136,7 +192,18 @@ router.post('/:id/reset-password', (req, res) => {
     return;
   }
 
-  user.passwordHash = hashPassword(newPassword);
+  await prisma.user.update({
+    where: { id: req.params.id },
+    data: { passwordHash: hashPassword(newPassword) },
+  });
+
+  logAudit({
+    persona: 'system',
+    action: 'user_password_reset',
+    outcome: 'success',
+    details: { userId: req.params.id, resetBy: (req as any).userId },
+  });
+
   res.json({ message: 'Password reset' });
 });
 

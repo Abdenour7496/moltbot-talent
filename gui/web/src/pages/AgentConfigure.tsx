@@ -102,6 +102,10 @@ export function AgentConfigurePage() {
   const [newTag, setNewTag] = useState('');
   const [skills, setSkills] = useState<string[]>([]);
   const [newSkill, setNewSkill] = useState('');
+  const [languages, setLanguages] = useState<string[]>([]);
+  const [newLanguage, setNewLanguage] = useState('');
+  const [certifications, setCertifications] = useState<string[]>([]);
+  const [newCertification, setNewCertification] = useState('');
 
   const [activeSection, setActiveSection] = useState<SectionKey>('profile');
   const [saving, setSaving] = useState(false);
@@ -126,6 +130,8 @@ export function AgentConfigurePage() {
     });
     setTags(agent.tags ?? []);
     setSkills(agent.skills ?? []);
+    setLanguages(agent.languages ?? []);
+    setCertifications(agent.certifications ?? []);
     setDirty(false);
   }, [agent]);
 
@@ -167,13 +173,39 @@ export function AgentConfigurePage() {
     setDirty(true);
   }, []);
 
+  const addLanguage = useCallback(() => {
+    const trimmed = newLanguage.trim();
+    if (!trimmed || languages.includes(trimmed)) return;
+    setLanguages((prev) => [...prev, trimmed]);
+    setNewLanguage('');
+    setDirty(true);
+  }, [newLanguage, languages]);
+
+  const removeLanguage = useCallback((lang: string) => {
+    setLanguages((prev) => prev.filter((l) => l !== lang));
+    setDirty(true);
+  }, []);
+
+  const addCertification = useCallback(() => {
+    const trimmed = newCertification.trim();
+    if (!trimmed || certifications.includes(trimmed)) return;
+    setCertifications((prev) => [...prev, trimmed]);
+    setNewCertification('');
+    setDirty(true);
+  }, [newCertification, certifications]);
+
+  const removeCertification = useCallback((cert: string) => {
+    setCertifications((prev) => prev.filter((c) => c !== cert));
+    setDirty(true);
+  }, []);
+
   const handleSave = useCallback(async () => {
     if (!id) return;
     setSaving(true);
     setSaveResult(null);
     try {
       if (activeSection === 'profile') {
-        await api.updateAgentConfig(id, { ...profileDraft, tags, skills });
+        await api.updateAgentConfig(id, { ...profileDraft, tags, skills, languages, certifications });
       } else if (activeSection in contentDraft) {
         await api.updateAgentConfig(id, { [activeSection]: contentDraft[activeSection as ContentSectionKey] });
       }
@@ -186,7 +218,7 @@ export function AgentConfigurePage() {
     } finally {
       setSaving(false);
     }
-  }, [id, activeSection, profileDraft, contentDraft, tags, skills, refetch]);
+  }, [id, activeSection, profileDraft, contentDraft, tags, skills, languages, certifications, refetch]);
 
   /* ── Render ────────────────────────────────────────────────── */
 
@@ -202,8 +234,8 @@ export function AgentConfigurePage() {
     return (
       <div className="text-center py-20 space-y-4">
         <p className="text-destructive">{error ?? 'Agent not found.'}</p>
-        <Button variant="outline" onClick={() => navigate('/marketplace')}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Back to Marketplace
+        <Button variant="outline" onClick={() => navigate('/agents')}>
+          <ArrowLeft className="h-4 w-4 mr-1" /> Back to Agents
         </Button>
       </div>
     );
@@ -215,7 +247,7 @@ export function AgentConfigurePage() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/marketplace')}>
+        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="flex-1">
@@ -439,6 +471,62 @@ export function AgentConfigurePage() {
                       className="flex-1"
                     />
                     <Button variant="outline" size="sm" onClick={addSkill} disabled={!newSkill.trim()}>
+                      <Plus className="h-4 w-4 mr-1" /> Add
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Languages */}
+                <div className="space-y-2">
+                  <label className="text-xs text-muted">Languages</label>
+                  <div className="flex flex-wrap gap-2">
+                    {languages.map((lang) => (
+                      <Badge key={lang} variant="outline" className="flex items-center gap-1 pr-1">
+                        {lang}
+                        <button onClick={() => removeLanguage(lang)} className="ml-1 rounded-full p-0.5 hover:bg-destructive/20">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                    {languages.length === 0 && <p className="text-xs text-muted">No languages assigned.</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Add a language (e.g. English, French)..."
+                      value={newLanguage}
+                      onChange={(e) => setNewLanguage(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && addLanguage()}
+                      className="flex-1"
+                    />
+                    <Button variant="outline" size="sm" onClick={addLanguage} disabled={!newLanguage.trim()}>
+                      <Plus className="h-4 w-4 mr-1" /> Add
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Certifications */}
+                <div className="space-y-2">
+                  <label className="text-xs text-muted">Certifications</label>
+                  <div className="flex flex-wrap gap-2">
+                    {certifications.map((cert) => (
+                      <Badge key={cert} variant="outline" className="flex items-center gap-1 pr-1">
+                        {cert}
+                        <button onClick={() => removeCertification(cert)} className="ml-1 rounded-full p-0.5 hover:bg-destructive/20">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                    {certifications.length === 0 && <p className="text-xs text-muted">No certifications assigned.</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Add a certification (e.g. AWS-SAA, CKA)..."
+                      value={newCertification}
+                      onChange={(e) => setNewCertification(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && addCertification()}
+                      className="flex-1"
+                    />
+                    <Button variant="outline" size="sm" onClick={addCertification} disabled={!newCertification.trim()}>
                       <Plus className="h-4 w-4 mr-1" /> Add
                     </Button>
                   </div>

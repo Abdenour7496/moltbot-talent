@@ -1,23 +1,25 @@
 import { Router } from 'express';
-import { approvals, addAuditEntry, nextApprovalId, type ApprovalRequest } from '../state.js';
+import { prisma, logAudit } from '../db/index.js';
 
 const router = Router();
 
 // List approvals (optionally filtered by status)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const status = req.query.status as string | undefined;
-  let list = Array.from(approvals.values());
-  if (status) {
-    list = list.filter((a) => a.status === status);
-  }
-  // Most recent first
-  list.sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime());
-  res.json(list);
+
+  const approvals = await prisma.approvalRequest.findMany({
+    where: status ? { status: status as any } : undefined,
+    orderBy: { requestedAt: 'desc' },
+  });
+
+  res.json(approvals);
 });
 
 // Get single approval
-router.get('/:id', (req, res) => {
-  const approval = approvals.get(req.params.id);
+router.get('/:id', async (req, res) => {
+  const approval = await prisma.approvalRequest.findUnique({
+    where: { id: req.params.id },
+  });
   if (!approval) {
     res.status(404).json({ error: 'Approval not found' });
     return;
@@ -26,8 +28,10 @@ router.get('/:id', (req, res) => {
 });
 
 // Grant approval
-router.post('/:id/grant', (req, res) => {
-  const approval = approvals.get(req.params.id);
+router.post('/:id/grant', async (req, res) => {
+  const approval = await prisma.approvalRequest.findUnique({
+    where: { id: req.params.id },
+  });
   if (!approval) {
     res.status(404).json({ error: 'Approval not found' });
     return;
@@ -37,26 +41,35 @@ router.post('/:id/grant', (req, res) => {
     return;
   }
 
-  const grantedBy = req.body.grantedBy ?? 'gui-user';
-  approval.status = 'granted';
-  approval.resolvedBy = grantedBy;
-  approval.resolvedAt = new Date();
+  const grantedBy: string = req.body.grantedBy ?? 'gui-user';
+  const resolvedAt = new Date();
 
-  addAuditEntry({
+  const updated = await prisma.approvalRequest.update({
+    where: { id: approval.id },
+    data: {
+      status: 'granted',
+      resolvedBy: grantedBy,
+      resolvedAt,
+    },
+  });
+
+  logAudit({
     persona: 'system',
     action: 'approval_granted',
     target: approval.action,
-    approval: { required: true, grantedBy, grantedAt: approval.resolvedAt },
+    approval: { required: true, grantedBy, grantedAt: resolvedAt },
     outcome: 'success',
     details: { approvalId: approval.id },
   });
 
-  res.json(approval);
+  res.json(updated);
 });
 
 // Deny approval
-router.post('/:id/deny', (req, res) => {
-  const approval = approvals.get(req.params.id);
+router.post('/:id/deny', async (req, res) => {
+  const approval = await prisma.approvalRequest.findUnique({
+    where: { id: req.params.id },
+  });
   if (!approval) {
     res.status(404).json({ error: 'Approval not found' });
     return;
@@ -66,13 +79,19 @@ router.post('/:id/deny', (req, res) => {
     return;
   }
 
-  const deniedBy = req.body.deniedBy ?? 'gui-user';
-  const reason = req.body.reason ?? '';
-  approval.status = 'denied';
-  approval.resolvedBy = deniedBy;
-  approval.resolvedAt = new Date();
+  const deniedBy: string = req.body.deniedBy ?? 'gui-user';
+  const reason: string = req.body.reason ?? '';
 
-  addAuditEntry({
+  const updated = await prisma.approvalRequest.update({
+    where: { id: approval.id },
+    data: {
+      status: 'denied',
+      resolvedBy: deniedBy,
+      resolvedAt: new Date(),
+    },
+  });
+
+  logAudit({
     persona: 'system',
     action: 'approval_denied',
     target: approval.action,
@@ -81,7 +100,7 @@ router.post('/:id/deny', (req, res) => {
     details: { approvalId: approval.id, deniedBy, reason },
   });
 
-  res.json(approval);
+  res.json(updated);
 });
 
 export default router;

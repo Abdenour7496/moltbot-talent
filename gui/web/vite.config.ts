@@ -16,11 +16,11 @@ export default defineConfig({
     allowedHosts: ['host.docker.internal'],
     proxy: {
       '/api': {
-        target: 'http://localhost:3002',
+        target: 'http://127.0.0.1:3100',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:3002',
+        target: 'ws://127.0.0.1:3100',
         ws: true,
         changeOrigin: true,
       },

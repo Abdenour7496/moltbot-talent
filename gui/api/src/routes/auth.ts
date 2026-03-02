@@ -5,20 +5,20 @@ import {
   signToken,
   requireAuth,
 } from '../auth.js';
-import { users, tenants, nextTenantId, addAuditEntry, type Tenant } from '../state.js';
+import { prisma, logAudit } from '../db/index.js';
 
 const router = Router();
 
 // ── POST /api/auth/login ────────────────────────────────────────────
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: 'Username and password are required' });
     return;
   }
 
-  const user = [...users.values()].find((u) => u.username === username);
+  const user = await prisma.user.findUnique({ where: { username } });
   if (!user || !verifyPassword(password, user.passwordHash)) {
     res.status(401).json({ error: 'Invalid credentials' });
     return;
@@ -29,7 +29,11 @@ router.post('/login', (req, res) => {
     return;
   }
 
-  user.lastLoginAt = new Date();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+
   const token = signToken({
     sub: user.id,
     role: user.role,
@@ -37,7 +41,7 @@ router.post('/login', (req, res) => {
     tenantId: user.tenantId,
   });
 
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'user_login',
     outcome: 'success',
@@ -50,7 +54,7 @@ router.post('/login', (req, res) => {
 
 // ── POST /api/auth/register ─────────────────────────────────────────
 
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   const { username, email, displayName, password } = req.body;
   if (!username || !email || !password) {
     res.status(400).json({ error: 'Username, email, and password are required' });
@@ -67,88 +71,114 @@ router.post('/register', (req, res) => {
     return;
   }
 
-  const existing = [...users.values()].find(
-    (u) => u.username === username || u.email === email,
-  );
+  const existing = await prisma.user.findFirst({
+    where: { OR: [{ username }, { email }] },
+  });
   if (existing) {
     res.status(409).json({ error: 'Username or email already taken' });
     return;
   }
 
-  const id = `usr_${Date.now()}`;
   const { orgName, orgIndustry } = req.body;
+  const role = orgName ? ('operator' as const) : ('viewer' as const);
 
-  const user: any = {
-    id,
-    username,
-    email,
-    displayName: displayName || username,
-    role: orgName ? ('operator' as const) : ('viewer' as const),
-    passwordHash: hashPassword(password),
-    active: true,
-    createdAt: new Date(),
-    lastLoginAt: new Date(),
-  };
+  // Atomic: create user + optional tenant in one transaction
+  const result = await prisma.$transaction(async (tx) => {
+    const newUser = await tx.user.create({
+      data: {
+        username,
+        email,
+        displayName: displayName || username,
+        role,
+        passwordHash: hashPassword(password),
+        active: true,
+        lastLoginAt: new Date(),
+      },
+    });
 
-  users.set(id, user);
+    let tenantData = undefined;
+    if (orgName) {
+      const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const existingTenant = await tx.tenant.findUnique({ where: { slug } });
+      if (existingTenant) {
+        throw Object.assign(new Error('An organization with this name already exists'), {
+          statusCode: 409,
+        });
+      }
 
-  // If orgName is provided, create a new organization and link the user
-  let tenantData: Tenant | undefined;
-  if (orgName) {
-    const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    const existingTenant = [...tenants.values()].find((t) => t.slug === slug);
-    if (existingTenant) {
-      users.delete(id);
-      res.status(409).json({ error: 'An organization with this name already exists' });
-      return;
+      const planLimits: Record<string, number> = {
+        free: 1, starter: 3, pro: 10, enterprise: 50,
+      };
+      const planBalances: Record<string, number> = {
+        free: 100, starter: 500, pro: 2000, enterprise: 10000,
+      };
+
+      tenantData = await tx.tenant.create({
+        data: {
+          name: orgName,
+          slug,
+          industry: orgIndustry ?? '',
+          plan: 'starter',
+          contactEmail: email,
+          ownerId: newUser.id,
+          maxActiveContracts: planLimits['starter'],
+          balance: planBalances['starter'],
+          active: true,
+        },
+      });
+
+      // Link user to the new tenant
+      await tx.user.update({
+        where: { id: newUser.id },
+        data: { tenantId: tenantData.id },
+      });
+
+      // Re-fetch user with tenantId
+      return {
+        user: { ...newUser, tenantId: tenantData.id },
+        tenant: tenantData,
+      };
     }
 
-    const tenantId = nextTenantId();
-    const planLimits: Record<string, number> = { free: 1, starter: 3, pro: 10, enterprise: 50 };
-    const planBalances: Record<string, number> = { free: 100, starter: 500, pro: 2000, enterprise: 10000 };
+    return { user: newUser, tenant: undefined };
+  });
 
-    tenantData = {
-      id: tenantId,
-      name: orgName,
-      slug,
-      industry: orgIndustry ?? '',
-      plan: 'starter',
-      contactEmail: email,
-      ownerId: id,
-      maxActiveContracts: planLimits['starter'],
-      balance: planBalances['starter'],
-      active: true,
-      createdAt: new Date(),
-    };
-
-    tenants.set(tenantId, tenantData);
-    user.tenantId = tenantId;
-
-    addAuditEntry({
+  if (orgName && result.tenant) {
+    logAudit({
       persona: 'system',
       action: 'org_created_on_register',
       outcome: 'success',
-      details: { tenantId, orgName, userId: id, username },
+      details: {
+        tenantId: result.tenant.id,
+        orgName,
+        userId: result.user.id,
+        username,
+      },
     });
   }
 
-  const token = signToken({ sub: id, role: user.role, username, tenantId: user.tenantId });
-
-  addAuditEntry({
+  logAudit({
     persona: 'system',
     action: 'user_registered',
     outcome: 'success',
-    details: { userId: id, username, orgName: orgName ?? null },
+    details: { userId: result.user.id, username, orgName: orgName ?? null },
   });
 
-  const { passwordHash: _, ...safeUser } = user;
-  res.status(201).json({ token, user: safeUser, tenant: tenantData });
+  const token = signToken({
+    sub: result.user.id,
+    role: result.user.role,
+    username,
+    tenantId: result.user.tenantId,
+  });
+
+  const { passwordHash: _, ...safeUser } = result.user;
+  res.status(201).json({ token, user: safeUser, tenant: result.tenant });
 });
 
 // ── GET /api/auth/me  (requires auth) ───────────────────────────────
 
-router.get('/me', requireAuth, (req, res) => {
-  const user = users.get((req as any).userId);
+router.get('/me', requireAuth, async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: (req as any).userId } });
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
@@ -159,25 +189,37 @@ router.get('/me', requireAuth, (req, res) => {
 
 // ── PUT /api/auth/profile  (requires auth) ──────────────────────────
 
-router.put('/profile', requireAuth, (req, res) => {
-  const user = users.get((req as any).userId);
+router.put('/profile', requireAuth, async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: (req as any).userId } });
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
   const { displayName, email, avatar } = req.body;
-  if (displayName !== undefined) user.displayName = displayName;
-  if (email !== undefined) user.email = email;
-  if (avatar !== undefined) user.avatar = avatar;
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      ...(displayName !== undefined && { displayName }),
+      ...(email !== undefined && { email }),
+      ...(avatar !== undefined && { avatar }),
+    },
+  });
 
-  const { passwordHash, ...safeUser } = user;
+  logAudit({
+    persona: 'system',
+    action: 'user_profile_updated',
+    outcome: 'success',
+    details: { userId: user.id, changes: { displayName, email, avatar } },
+  });
+
+  const { passwordHash, ...safeUser } = updated;
   res.json(safeUser);
 });
 
 // ── PUT /api/auth/password  (requires auth) ─────────────────────────
 
-router.put('/password', requireAuth, (req, res) => {
-  const user = users.get((req as any).userId);
+router.put('/password', requireAuth, async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: (req as any).userId } });
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
@@ -199,7 +241,10 @@ router.put('/password', requireAuth, (req, res) => {
     return;
   }
 
-  user.passwordHash = hashPassword(newPassword);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: hashPassword(newPassword) },
+  });
   res.json({ message: 'Password updated' });
 });
 

@@ -2,45 +2,48 @@ import { Router } from 'express';
 import {
   personas,
   knowledgeBases,
-  approvals,
-  auditLog,
   sessions,
-  contracts,
-  workflowRuns,
   skills,
   integrations,
   channels,
   cronTasks,
 } from '../state.js';
+import { prisma } from '../db/index.js';
 
 const router = Router();
 
-router.get('/', (_req, res) => {
+router.get('/', async (_req, res) => {
   const activePersonas = Array.from(personas.values()).filter((p) => p.active);
-  const pendingApprovalsList = Array.from(approvals.values()).filter(
-    (a) => a.status === 'pending',
-  );
-  const activeSessions = Array.from(sessions.values()).filter(
-    (s) => s.status === 'active',
-  );
-  const activeContracts = Array.from(contracts.values()).filter(
-    (c) => c.status === 'active',
-  );
-  const workflowRunList = Array.from(workflowRuns.values());
+  const activeSessions = Array.from(sessions.values()).filter((s) => s.status === 'active');
+
+  // Prisma-backed queries
+  const [
+    pendingApprovals,
+    recentAudit,
+    workflowRunList,
+    activeContracts,
+    totalContracts,
+    totalAuditEntries,
+  ] = await Promise.all([
+    prisma.approvalRequest.findMany({ where: { status: 'pending' }, orderBy: { requestedAt: 'desc' }, take: 5 }),
+    prisma.auditEntry.findMany({ orderBy: { timestamp: 'desc' }, take: 10 }),
+    prisma.workflowRun.findMany({ include: { steps: true }, orderBy: { updatedAt: 'desc' } }),
+    prisma.contract.findMany({ where: { status: 'active' } }),
+    prisma.contract.count(),
+    prisma.auditEntry.count(),
+  ]);
+
   const runningWorkflows = workflowRunList.filter((r) => r.status === 'running');
   const escalatedWorkflows = workflowRunList.filter((r) => r.status === 'escalated');
 
-  const recentActivity = auditLog
-    .slice(-10)
-    .reverse()
-    .map((e) => ({
-      id: e.id,
-      timestamp: e.timestamp,
-      action: e.action,
-      persona: e.persona,
-      outcome: e.outcome,
-      target: e.target,
-    }));
+  const recentActivity = recentAudit.map((e) => ({
+    id: e.id,
+    timestamp: e.timestamp,
+    action: e.action,
+    persona: e.persona,
+    outcome: e.outcome,
+    target: e.target,
+  }));
 
   // Top personas with summary info
   const topPersonas = Array.from(personas.values())
@@ -54,7 +57,7 @@ router.get('/', (_req, res) => {
     }));
 
   // Pending approvals detail
-  const pendingApprovalsDetail = pendingApprovalsList.slice(0, 5).map((a) => ({
+  const pendingApprovalsDetail = pendingApprovals.slice(0, 5).map((a) => ({
     id: a.id,
     action: a.action,
     description: a.description,
@@ -67,9 +70,7 @@ router.get('/', (_req, res) => {
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
     .slice(0, 5)
     .map((r) => {
-      const completed = r.steps.filter(
-        (s) => s.status === 'done',
-      ).length;
+      const completed = r.steps.filter((s) => s.status === 'done').length;
       return {
         id: r.id,
         workflowName: r.workflowName,
@@ -98,10 +99,10 @@ router.get('/', (_req, res) => {
       totalPersonas: personas.size,
       activePersonas: activePersonas.length,
       knowledgeBases: knowledgeBases.size,
-      pendingApprovals: pendingApprovalsList.length,
-      totalAuditEntries: auditLog.length,
+      pendingApprovals: pendingApprovals.length,
+      totalAuditEntries,
       activeSessions: activeSessions.length,
-      totalContracts: contracts.size,
+      totalContracts,
       activeContracts: activeContracts.length,
       totalWorkflowRuns: workflowRunList.length,
       runningWorkflows: runningWorkflows.length,

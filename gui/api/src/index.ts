@@ -104,9 +104,15 @@ async function main() {
     res.json(settings);
   });
 
+  const FORBIDDEN_KEYS = ['__proto__', 'constructor', 'prototype'];
+
   app.put('/api/settings', (req, res) => {
     if (typeof req.body !== 'object' || req.body === null) {
       res.status(400).json({ error: 'Request body must be an object' });
+      return;
+    }
+    if (Object.keys(req.body).some((k) => FORBIDDEN_KEYS.includes(k))) {
+      res.status(400).json({ error: 'Invalid settings key' });
       return;
     }
     Object.assign(settings, req.body);
@@ -116,6 +122,10 @@ async function main() {
   app.patch('/api/settings', (req, res) => {
     if (typeof req.body !== 'object' || req.body === null) {
       res.status(400).json({ error: 'Request body must be an object' });
+      return;
+    }
+    if (Object.keys(req.body).some((k) => FORBIDDEN_KEYS.includes(k))) {
+      res.status(400).json({ error: 'Invalid settings key' });
       return;
     }
     Object.assign(settings, req.body);

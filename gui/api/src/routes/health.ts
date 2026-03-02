@@ -6,9 +6,9 @@ import {
   channels,
   hooks,
   cronTasks,
-  auditLog,
   integrations,
 } from '../state.js';
+import { prisma } from '../db/index.js';
 
 const router = Router();
 
@@ -21,7 +21,7 @@ interface ComponentHealth {
   latency?: number;
 }
 
-router.get('/', (_req, res) => {
+router.get('/', async (_req, res) => {
   const start = Date.now();
 
   const components: ComponentHealth[] = [
@@ -69,7 +69,7 @@ router.get('/', (_req, res) => {
     {
       name: 'Audit Log',
       status: 'healthy',
-      details: `${auditLog.length} entries`,
+      details: `${await prisma.auditEntry.count()} entries`,
     },
   ];
 

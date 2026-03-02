@@ -1,12 +1,9 @@
 import { Router } from 'express';
-import { auditLog } from '../state.js';
+import { prisma } from '../db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  let entries = [...auditLog];
-
-  // Filters
+router.get('/', async (req, res) => {
   const action = req.query.action as string | undefined;
   const persona = req.query.persona as string | undefined;
   const outcome = req.query.outcome as string | undefined;
@@ -17,27 +14,26 @@ router.get('/', (req, res) => {
   const kbId = req.query.kbId as string | undefined;
   const limit = parseInt(req.query.limit as string) || 50;
 
-  if (action) entries = entries.filter((e) => e.action === action);
-  if (persona) entries = entries.filter((e) => e.persona === persona);
-  if (outcome) entries = entries.filter((e) => e.outcome === outcome);
-  if (sessionId) entries = entries.filter((e) => e.sessionId === sessionId);
-  if (since) {
-    const sinceDate = new Date(since);
-    entries = entries.filter((e) => e.timestamp >= sinceDate);
-  }
+  const where: any = {};
+  if (action) where.action = action;
+  if (persona) where.persona = persona;
+  if (outcome) where.outcome = outcome;
+  if (sessionId) where.sessionId = sessionId;
+  if (since) where.timestamp = { gte: new Date(since) };
+
+  // JSON path filters for PostgreSQL
   if (chunkId) {
-    entries = entries.filter((e) => {
-      const ids = e.details?.retrievalIds;
-      return Array.isArray(ids) && ids.includes(chunkId);
-    });
+    where.details = { path: ['retrievalIds'], array_contains: chunkId };
   }
   if (kbId) {
-    entries = entries.filter((e) => e.details?.kbId === kbId);
+    where.details = { path: ['kbId'], equals: kbId };
   }
 
-  // Most recent first, apply limit
-  entries.reverse();
-  entries = entries.slice(0, limit);
+  const entries = await prisma.auditEntry.findMany({
+    where,
+    orderBy: { timestamp: 'desc' },
+    take: limit,
+  });
 
   res.json(entries);
 });

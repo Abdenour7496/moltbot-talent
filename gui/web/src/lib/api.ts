@@ -62,7 +62,8 @@ export const api = {
 
   // Knowledge
   getKnowledgeBases: () => request<any[]>('/knowledge'),
-  getAzureKnowledgeBases: () => request<any[]>('/azure-knowledge-bases'),
+  getAzureKnowledgeBases: () => request<any[]>('/azure/knowledge-bases'),
+  getAzureStatus: () => request<{ configured: boolean; endpoint: string | null; apiVersion: string }>('/azure/knowledge-bases/status'),
   createKnowledgeBase: (data: { name: string; domain: string }) =>
     request<any>('/knowledge', { method: 'POST', body: JSON.stringify(data) }),
   getKBStats: (id: string) => request<any>(`/knowledge/${id}/stats`),

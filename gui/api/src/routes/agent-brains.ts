@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import {
   agentListings,
+  personas,
   brainConfigs,
   nextLlmEntryId,
   addAuditEntry,
@@ -13,10 +14,10 @@ function aid(req: Request): string {
   return req.params.agentId as string;
 }
 
-// Middleware: validate agent exists and auto-create brain config if missing
+// Middleware: validate agent exists (listing OR persona) and auto-create brain config if missing
 router.use((req: Request, res: Response, next: NextFunction) => {
   const agentId = aid(req);
-  if (!agentListings.has(agentId)) {
+  if (!agentListings.has(agentId) && !personas.has(agentId)) {
     res.status(404).json({ error: 'Agent not found' });
     return;
   }

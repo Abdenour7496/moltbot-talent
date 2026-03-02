@@ -39,6 +39,13 @@
   "pnpm": {
     "overrides": {
       "moltbot": "0.1.0"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma",
+      "protobufjs"
+    ]
   }
 }
