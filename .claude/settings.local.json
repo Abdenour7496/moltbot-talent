@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install)",
+      "Bash(timeout 8 pnpm:*)",
+      "Bash(timeout 12 pnpm:*)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(npx vite)"
+    ]
+  }
+}

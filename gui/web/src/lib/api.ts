@@ -316,6 +316,11 @@ export const api = {
   // Contracts
   getContracts: (qs?: string) => request<any[]>(`/contracts${qs || ''}`),
   getContract: (id: string) => request<any>(`/contracts/${id}`),
+  getContractStats: () => request<any>('/contracts/stats'),
+  createContract: (data: { title: string; agentId: string; departmentId?: string; description?: string; specialty?: string; hourlyRate?: number; estimatedHours?: number; milestones?: { title: string; description?: string; dueDate?: string; amount?: number }[] }) =>
+    request<any>('/contracts', { method: 'POST', body: JSON.stringify(data) }),
+  deleteContract: (id: string) =>
+    request<any>(`/contracts/${id}`, { method: 'DELETE' }),
   updateContract: (id: string, data: any) =>
     request<any>(`/contracts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   completeContract: (id: string, data: { rating?: number; feedback?: string }) =>

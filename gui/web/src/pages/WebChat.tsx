@@ -1,17 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { useApi } from '@/hooks/use-api';
+import { api } from '@/lib/api';
 import {
   Send,
   Bot,
   User,
-  Minimize2,
-  Maximize2,
   MessageCircle,
-  X,
   Loader2,
 } from 'lucide-react';
 
@@ -20,6 +20,13 @@ interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: Date;
+  speakerName?: string;
+}
+
+interface PersonaSummary {
+  id: string;
+  name: string;
+  active: boolean;
 }
 
 export function WebChatPage() {
@@ -27,15 +34,21 @@ export function WebChatPage() {
     {
       id: '1',
       role: 'assistant',
-      content: 'Hello! I\'m your AI assistant. How can I help you today?',
+      content: 'Hello! I\'m your AI assistant. Select a persona and start chatting.',
       timestamp: new Date(),
     },
   ]);
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [selectedPersonaId, setSelectedPersonaId] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const { data: personas, loading: personasLoading } = useApi<PersonaSummary[]>(
+    () => api.getPersonas(),
+    [],
+  );
 
   // Connect to WebSocket
   useEffect(() => {
@@ -80,9 +93,9 @@ export function WebChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || !selectedPersonaId) return;
 
     // Handle chat commands
     if (trimmed.startsWith('/')) {
@@ -92,7 +105,7 @@ export function WebChatPage() {
 
       switch (cmd) {
         case '/status':
-          systemMsg = `Connected: ${isConnected ? 'Yes' : 'No'}\nMessages: ${messages.length}\nSession: webchat`;
+          systemMsg = `Connected: ${isConnected ? 'Yes' : 'No'}\nMessages: ${messages.length}\nPersona: ${selectedPersonaId}`;
           break;
         case '/new':
         case '/reset':
@@ -104,20 +117,8 @@ export function WebChatPage() {
           }]);
           setInput('');
           return;
-        case '/compact':
-          systemMsg = 'Session context compacted.';
-          break;
-        case '/think':
-          systemMsg = `Thinking level set to: ${parts[1] ?? 'medium'}`;
-          break;
-        case '/verbose':
-          systemMsg = `Verbose mode: ${parts[1] ?? 'on'}`;
-          break;
-        case '/usage':
-          systemMsg = `Usage display: ${parts[1] ?? 'tokens'}`;
-          break;
         case '/help':
-          systemMsg = 'Available commands:\n/status — session status\n/new or /reset — reset session\n/compact — compact context\n/think <level> — set thinking level\n/verbose on|off — toggle verbose\n/usage off|tokens|full — usage display\n/help — show this help';
+          systemMsg = 'Available commands:\n/status — session status\n/new or /reset — reset session\n/help — show this help';
           break;
         default:
           systemMsg = `Unknown command: ${cmd}. Type /help for available commands.`;
@@ -143,20 +144,32 @@ export function WebChatPage() {
     setInput('');
     setIsThinking(true);
 
-    // Simulate agent response (in production, this goes through the WS gateway)
-    setTimeout(() => {
+    try {
+      const resp = await api.chatWithPersona(selectedPersonaId, trimmed);
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: generateResponse(trimmed),
+          content: resp.response,
+          timestamp: new Date(resp.timestamp),
+          speakerName: resp.personaName,
+        },
+      ]);
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: 'system',
+          content: `Error: ${err.message}`,
           timestamp: new Date(),
         },
       ]);
+    } finally {
       setIsThinking(false);
-    }, 1000 + Math.random() * 2000);
-  }, [input, isConnected, messages.length]);
+    }
+  }, [input, isConnected, messages.length, selectedPersonaId]);
 
   const roleBg = (role: string) =>
     role === 'user'
@@ -171,7 +184,7 @@ export function WebChatPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <MessageCircle className="h-5 w-5 text-accent" />
           <h2 className="text-lg font-semibold">WebChat</h2>
@@ -179,7 +192,21 @@ export function WebChatPage() {
             {isConnected ? 'Connected' : 'Disconnected'}
           </Badge>
         </div>
-        <p className="text-xs text-muted">Type /help for available commands</p>
+        <div className="flex items-center gap-2">
+          <Select
+            value={selectedPersonaId}
+            onChange={(e) => setSelectedPersonaId(e.target.value)}
+            className="w-48"
+          >
+            <option value="">
+              {personasLoading ? 'Loading…' : 'Select persona'}
+            </option>
+            {personas?.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}{p.active ? '' : ' (inactive)'}</option>
+            ))}
+          </Select>
+          <p className="text-xs text-muted">Type /help for commands</p>
+        </div>
       </div>
 
       {/* Messages */}
@@ -197,7 +224,7 @@ export function WebChatPage() {
               <div className="flex items-center gap-2 mb-1">
                 {roleIcon(m.role)}
                 <span className="text-[10px] text-muted">
-                  {m.role === 'user' ? 'You' : m.role === 'assistant' ? 'Assistant' : 'System'}
+                  {m.role === 'user' ? 'You' : m.role === 'assistant' ? (m.speakerName ?? 'Assistant') : 'System'}
                 </span>
                 <span className="text-[10px] text-muted ml-auto">
                   {m.timestamp.toLocaleTimeString()}
@@ -219,30 +246,17 @@ export function WebChatPage() {
       {/* Input */}
       <div className="flex gap-2 mt-4">
         <Input
-          placeholder="Type a message or /command..."
+          placeholder={selectedPersonaId ? 'Type a message or /command...' : 'Select a persona first...'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+          disabled={!selectedPersonaId}
           className="flex-1"
         />
-        <Button onClick={handleSend} disabled={!input.trim()}>
+        <Button onClick={handleSend} disabled={!input.trim() || !selectedPersonaId}>
           <Send className="h-4 w-4" /> Send
         </Button>
       </div>
     </div>
   );
-}
-
-// Simple response generator (placeholder for real agent integration)
-function generateResponse(input: string): string {
-  const lower = input.toLowerCase();
-  if (lower.includes('hello') || lower.includes('hi'))
-    return 'Hello! How can I assist you today?';
-  if (lower.includes('help'))
-    return 'I can help with:\n• System monitoring and health checks\n• Running IT operations procedures\n• Knowledge base queries\n• Incident triage and escalation\n\nWhat would you like to do?';
-  if (lower.includes('status'))
-    return 'All systems are operational. No active incidents detected.';
-  if (lower.includes('deploy'))
-    return 'To initiate a deployment, I\'ll need:\n1. Service name\n2. Target environment\n3. Version/branch\n\nThis will require approval for production environments.';
-  return `I received your message: "${input}". In production, this would be processed by the agent runtime with your configured LLM. You can use /help to see available chat commands.`;
 }

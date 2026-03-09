@@ -31,6 +31,7 @@ function enrichWithAgent(contract: any) {
     ...contract,
     agentName: agent?.name ?? 'Unknown',
     agentTitle: agent?.title ?? '',
+    departmentName: contract.department?.name ?? null,
     messages: (contract.messages ?? []).map(mapMessage),
   };
 }
@@ -39,12 +40,131 @@ function enrichWithAgent(contract: any) {
 const CONTRACT_INCLUDE = {
   milestones: { orderBy: { createdAt: 'asc' as const } },
   messages: { orderBy: { createdAt: 'asc' as const } },
+  department: { select: { id: true, name: true } },
 };
+
+// ── GET /api/contracts/stats ─────────────────────────────────────────
+
+router.get('/stats', async (req, res) => {
+  const orgTenantId = await callerTenantId(req);
+  const where: any = {};
+  if (orgTenantId) where.tenantId = orgTenantId;
+
+  const all = await prisma.contract.findMany({ where, select: { status: true, totalCost: true, actualHours: true, estimatedHours: true, hourlyRate: true, rating: true } });
+
+  const byStatus: Record<string, number> = {};
+  let totalCost = 0;
+  let totalHours = 0;
+  let totalEstimated = 0;
+  let ratingSum = 0;
+  let ratingCount = 0;
+
+  for (const c of all) {
+    byStatus[c.status] = (byStatus[c.status] || 0) + 1;
+    totalCost += c.totalCost;
+    totalHours += c.actualHours;
+    totalEstimated += c.estimatedHours;
+    if (c.rating != null) {
+      ratingSum += c.rating;
+      ratingCount++;
+    }
+  }
+
+  res.json({
+    total: all.length,
+    byStatus,
+    totalCost,
+    totalHours,
+    totalEstimated,
+    avgRating: ratingCount > 0 ? +(ratingSum / ratingCount).toFixed(1) : null,
+  });
+});
+
+// ── POST /api/contracts ─────────────────────────────────────────────
+
+router.post('/', async (req, res) => {
+  const { title, description, agentId, departmentId, specialty, hourlyRate, estimatedHours, milestones } = req.body;
+
+  if (!title || !agentId) {
+    res.status(400).json({ error: 'title and agentId are required' });
+    return;
+  }
+
+  const orgTenantId = await callerTenantId(req);
+  if (!orgTenantId) {
+    res.status(403).json({ error: 'Only organization users can create contracts' });
+    return;
+  }
+
+  // Resolve agent info
+  const agent = agentListings.get(agentId);
+  if (!agent) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  const contract = await prisma.$transaction(async (tx) => {
+    const c = await tx.contract.create({
+      data: {
+        tenantId: orgTenantId,
+        agentId,
+        clientUserId: (req as any).userId,
+        departmentId: departmentId || null,
+        title,
+        description: description ?? '',
+        specialty: specialty ?? agent.specialty ?? '',
+        hourlyRate: Number(hourlyRate) || agent.hourlyRate || 0,
+        estimatedHours: Number(estimatedHours) || 0,
+        status: 'pending',
+      },
+    });
+
+    // Create initial milestones if provided
+    if (Array.isArray(milestones) && milestones.length > 0) {
+      await tx.contractMilestone.createMany({
+        data: milestones.map((m: any) => ({
+          contractId: c.id,
+          title: m.title ?? 'Milestone',
+          description: m.description ?? '',
+          dueDate: m.dueDate ? new Date(m.dueDate) : undefined,
+          amount: Number(m.amount) || 0,
+          status: 'pending',
+        })),
+      });
+    }
+
+    // Add system message
+    await tx.contractMessage.create({
+      data: {
+        contractId: c.id,
+        senderId: 'system',
+        senderType: 'system',
+        content: `Contract created: "${title}" with agent ${agent.name}.`,
+      },
+    });
+
+    return c;
+  });
+
+  logAudit({
+    persona: 'system',
+    action: 'contract_created',
+    outcome: 'success',
+    details: { contractId: contract.id, agentId, title },
+  });
+
+  const full = await prisma.contract.findUnique({
+    where: { id: contract.id },
+    include: CONTRACT_INCLUDE,
+  });
+
+  res.status(201).json(enrichWithAgent(full!));
+});
 
 // ── GET /api/contracts ──────────────────────────────────────────────
 
 router.get('/', async (req, res) => {
-  const { tenantId, agentId, status } = req.query;
+  const { tenantId, agentId, status, departmentId } = req.query;
   const orgTenantId = await callerTenantId(req);
 
   const where: any = {};
@@ -55,6 +175,7 @@ router.get('/', async (req, res) => {
   }
   if (agentId) where.agentId = agentId;
   if (status) where.status = status;
+  if (departmentId) where.departmentId = departmentId;
 
   const list = await prisma.contract.findMany({
     where,
@@ -101,13 +222,14 @@ router.put('/:id', async (req, res) => {
     return;
   }
 
-  const { title, description, estimatedHours } = req.body;
+  const { title, description, estimatedHours, departmentId } = req.body;
   const updated = await prisma.contract.update({
     where: { id: req.params.id },
     data: {
       ...(title !== undefined && { title }),
       ...(description !== undefined && { description }),
       ...(estimatedHours !== undefined && { estimatedHours: Number(estimatedHours) }),
+      ...(departmentId !== undefined && { departmentId: departmentId || null }),
     },
     include: CONTRACT_INCLUDE,
   });
@@ -116,7 +238,7 @@ router.put('/:id', async (req, res) => {
     persona: 'system',
     action: 'contract_updated',
     outcome: 'success',
-    details: { contractId: contract.id, changes: { title, description, estimatedHours } },
+    details: { contractId: contract.id, changes: { title, description, estimatedHours, departmentId } },
   });
 
   res.json(enrichWithAgent(updated));
@@ -500,6 +622,45 @@ router.post('/:id/milestones', async (req, res) => {
   });
 
   res.status(201).json(ms);
+});
+
+// ── DELETE /api/contracts/:id ───────────────────────────────────────
+
+router.delete('/:id', async (req, res) => {
+  const contract = await prisma.contract.findUnique({ where: { id: req.params.id } });
+  if (!contract) {
+    res.status(404).json({ error: 'Contract not found' });
+    return;
+  }
+
+  const orgTenantId = await callerTenantId(req);
+  if (orgTenantId && contract.tenantId !== orgTenantId) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+
+  if (contract.status === 'active') {
+    res.status(409).json({ error: 'Cannot delete an active contract. Cancel it first.' });
+    return;
+  }
+
+  // Release agent if needed
+  const agent = agentListings.get(contract.agentId);
+  if (agent && agent.currentContractId === contract.id) {
+    agent.availability = 'available';
+    agent.currentContractId = undefined;
+  }
+
+  await prisma.contract.delete({ where: { id: contract.id } });
+
+  logAudit({
+    persona: 'system',
+    action: 'contract_deleted',
+    outcome: 'success',
+    details: { contractId: contract.id, agentId: contract.agentId },
+  });
+
+  res.json({ ok: true });
 });
 
 export default router;

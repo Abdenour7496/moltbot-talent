@@ -133,9 +133,10 @@ model Tenant {
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
-  owner     User       @relation("TenantOwner", fields: [ownerId], references: [id])
-  members   User[]     @relation("TenantMembers")
-  contracts Contract[] @relation("TenantContracts")
+  owner              User       @relation("TenantOwner", fields: [ownerId], references: [id])
+  members            User[]     @relation("TenantMembers")
+  contracts          Contract[] @relation("TenantContracts")
+  departmentContracts Contract[] @relation("DepartmentContracts")
 
   @@map("tenants")
 }
@@ -145,6 +146,7 @@ model Contract {
   tenantId       String
   agentId        String
   clientUserId   String?
+  departmentId   String?
   title          String
   description    String         @default("")
   specialty      String
@@ -161,6 +163,7 @@ model Contract {
   updatedAt      DateTime       @updatedAt
 
   tenant     Tenant              @relation("TenantContracts", fields: [tenantId], references: [id], onDelete: Cascade)
+  department Tenant?             @relation("DepartmentContracts", fields: [departmentId], references: [id], onDelete: SetNull)
   client     User?               @relation("ContractClient", fields: [clientUserId], references: [id], onDelete: SetNull)
   milestones ContractMilestone[]
   messages   ContractMessage[]

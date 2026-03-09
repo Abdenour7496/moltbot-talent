@@ -79,7 +79,7 @@ JWT_SECRET=your-long-random-secret pnpm dev:api
 | `/gateway` | Gateway | WebSocket gateway status and connected clients |
 | `/usage` | Usage | Token and request usage metrics |
 | `/marketplace` | Marketplace | Browse and hire AI agents; list personas as agents |
-| `/contracts` | Contracts | Manage active/completed contracts, milestones, hours, messages |
+| `/contracts` | Contracts | Create, manage, and monitor contracts; assign to departments; track milestones, hours, messages, and ratings |
 | `/organizations` | Organizations | Tenant/organization management (admin only) |
 | `/org/portal` | Org Portal | Organization-scoped dashboard for hired agents and contracts |
 | `/org/agents` | Org Agents | Agents hired by the current organization |
@@ -397,9 +397,11 @@ Base path: `/personas/:personaId/brain`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/contracts` | List contracts (filters: `tenantId`, `agentId`, `status`) |
-| `GET` | `/contracts/:id` | Get contract detail |
-| `PUT` | `/contracts/:id` | Update contract (title, description, estimatedHours) |
+| `GET` | `/contracts/stats` | Contract monitoring stats (total, by status, cost, hours, avg rating) |
+| `POST` | `/contracts` | Create contract (title, agentId, departmentId?, description, specialty, hourlyRate, estimatedHours, milestones) |
+| `GET` | `/contracts` | List contracts (filters: `tenantId`, `agentId`, `status`, `departmentId`) |
+| `GET` | `/contracts/:id` | Get contract detail (includes department info) |
+| `PUT` | `/contracts/:id` | Update contract (title, description, estimatedHours, departmentId) |
 | `POST` | `/contracts/:id/message` | Add a message to the contract thread |
 | `POST` | `/contracts/:id/complete` | Complete contract (optional rating + feedback) |
 | `POST` | `/contracts/:id/cancel` | Cancel contract and release the agent |
@@ -408,6 +410,7 @@ Base path: `/personas/:personaId/brain`
 | `PUT` | `/contracts/:id/hours` | Log hours worked |
 | `POST` | `/contracts/:id/milestones` | Add a milestone |
 | `PUT` | `/contracts/:id/milestones/:msId` | Update a milestone (status, title, amount) |
+| `DELETE` | `/contracts/:id` | Delete a non-active contract (pending, completed, or cancelled only) |
 
 ---
 
@@ -519,13 +522,14 @@ Base path: `/personas/:personaId/brain`
 
 ## State Model
 
-The API server uses **in-memory state** (JavaScript `Map` objects). All data resets when the server restarts. This is intentional for the current development phase. Production deployment will require a persistence layer (PostgreSQL, Redis, etc.).
+The API server uses **in-memory state** (JavaScript `Map` objects) for most resources. Contracts and tenants are persisted in **PostgreSQL** via **Prisma ORM**. Other in-memory data resets when the server restarts. This is intentional for the current development phase. Production deployment will require a persistence layer for all resources.
 
 Key state collections:
 - `personas` — Loaded persona configs and markdown content
 - `knowledgeBases` — Knowledge base metadata
 - `sessions` / `auditLog` / `approvals` — Operational data
-- `agentListings` / `contracts` — Marketplace and hiring data
-- `users` / `tenants` — Auth and multi-tenancy
+- `agentListings` — Marketplace listings (in-memory)
+- `contracts` — Hiring contracts (PostgreSQL via Prisma, supports department assignment)
+- `users` / `tenants` — Auth and multi-tenancy (PostgreSQL via Prisma)
 - `workflowRuns` — Multi-agent pipeline execution records
 - `brainConfigs` — Per-persona LLM routing configuration

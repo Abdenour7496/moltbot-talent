@@ -115,6 +115,9 @@ moltbot talent query "How do I restart the payment service?"
 moltbot-talent/
 ├── gui/                         # Web management console
 │   ├── api/                     # Express REST + WebSocket API
+│   │   ├── prisma/              # Prisma ORM schema & migrations
+│   │   │   ├── schema.prisma    # Database models (contracts, tenants, users)
+│   │   │   └── migrations/      # Migration history
 │   │   └── src/
 │   │       ├── index.ts         # App entry, route mounts
 │   │       ├── auth.ts          # JWT middleware
@@ -249,6 +252,9 @@ Personas can be listed on the built-in marketplace and hired by organizations un
 
 - **List an agent** — From the Personas page, publish a persona as a marketplace agent with a specialty and hourly rate
 - **Hire an agent** — Organizations browse and hire agents; contracts track hours, milestones, and messages
+- **Create contracts** — Manually create contracts with custom title, agent, description, hourly rate, estimated hours, and milestones
+- **Assign to departments** — Contracts can be assigned to departments (tenants) for organizational grouping and filtering
+- **Monitor contracts** — Dashboard with stats: total contracts, active, pending, total cost, hours logged, and average rating
 - **Multi-tenant** — Each organization has its own isolated view of contracts and hired agents
 
 ## Orgo — Desktop Infrastructure for AI Agents
@@ -362,6 +368,9 @@ Connect to enterprise systems through Moltbot extensions:
 - [x] Workflow run lifecycle (pending → running → completed/failed/escalated/cancelled)
 - [x] Orgo desktop infrastructure integration
 - [x] Agent Marketplace with hiring and contracts
+- [x] Contract creation, deletion, and monitoring dashboard
+- [x] Department assignment for contracts
+- [x] PostgreSQL persistence via Prisma ORM (contracts, tenants)
 - [x] Multi-tenant organizations
 - [x] Role-based access control (admin/operator/viewer)
 - [x] WebSocket real-time gateway
@@ -370,7 +379,7 @@ Connect to enterprise systems through Moltbot extensions:
 - [ ] ServiceNow live integration
 - [ ] Jira live integration
 - [ ] Enterprise auth (SAML/OIDC)
-- [ ] Persistent storage (replace in-memory state)
+- [ ] Persistent storage (extend Prisma to all remaining in-memory state)
 - [ ] Workflow YAML hot-reload
 - [ ] Agent performance analytics
 

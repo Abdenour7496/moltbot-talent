@@ -18,6 +18,12 @@ import {
   Timer,
   Milestone,
   Plus,
+  Trash2,
+  BarChart3,
+  TrendingUp,
+  Hash,
+  X,
+  Building2,
 } from 'lucide-react';
 
 interface ContractMilestone {
@@ -43,6 +49,8 @@ interface Contract {
   tenantId: string;
   agentId: string;
   clientUserId: string;
+  departmentId?: string;
+  departmentName?: string;
   title: string;
   description: string;
   specialty: string;
@@ -58,6 +66,27 @@ interface Contract {
   startedAt: string;
   completedAt?: string;
   agentName?: string;
+}
+
+interface ContractStats {
+  total: number;
+  byStatus: Record<string, number>;
+  totalCost: number;
+  totalHours: number;
+  totalEstimated: number;
+  avgRating: number | null;
+}
+
+interface AgentOption {
+  id: string;
+  name: string;
+  specialty: string;
+  hourlyRate: number;
+}
+
+interface DepartmentOption {
+  id: string;
+  name: string;
 }
 
 const statusStyles: Record<string, { bg: string; text: string; icon: typeof Clock }> = {
@@ -82,12 +111,100 @@ export function ContractsPage() {
   const [hoursInput, setHoursInput] = useState<Record<string, number>>({});
   const [actionError, setActionError] = useState('');
 
+  // ── Create modal state ──
+  const [showCreate, setShowCreate] = useState(false);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [createForm, setCreateForm] = useState({
+    title: '',
+    description: '',
+    agentId: '',
+    departmentId: '',
+    specialty: '',
+    hourlyRate: 0,
+    estimatedHours: 0,
+  });
+  const [createMilestones, setCreateMilestones] = useState<{ title: string; description: string; dueDate: string; amount: number }[]>([]);
+  const [createLoading, setCreateLoading] = useState(false);
+
+  // ── Monitor stats state ──
+  const [stats, setStats] = useState<ContractStats | null>(null);
+
+  // ── Department state ──
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [deptFilter, setDeptFilter] = useState('');
+
   const load = () => {
-    const qs = statusFilter ? `?status=${statusFilter}` : '';
+    const params = new URLSearchParams();
+    if (statusFilter) params.set('status', statusFilter);
+    if (deptFilter) params.set('departmentId', deptFilter);
+    const qs = params.toString() ? `?${params.toString()}` : '';
     api.getContracts(qs).then(setContracts).finally(() => setLoading(false));
+    api.getContractStats().then(setStats).catch(() => {});
+    api.getTenants().then(setDepartments).catch(() => {});
   };
 
-  useEffect(load, [statusFilter]);
+  useEffect(load, [statusFilter, deptFilter]);
+
+  const openCreate = () => {
+    api.getAgents('?availability=available').then(setAgents).catch(() =>
+      api.getAgents().then(setAgents).catch(() => {}),
+    );
+    setCreateForm({ title: '', description: '', agentId: '', departmentId: '', specialty: '', hourlyRate: 0, estimatedHours: 0 });
+    setCreateMilestones([]);
+    setShowCreate(true);
+  };
+
+  const handleCreate = async () => {
+    if (!createForm.title.trim() || !createForm.agentId) {
+      setActionError('Title and agent are required');
+      return;
+    }
+    setCreateLoading(true);
+    try {
+      await api.createContract({
+        ...createForm,
+        milestones: createMilestones.filter((m) => m.title.trim()),
+      });
+      setShowCreate(false);
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to create contract');
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleAgentSelect = (agentId: string) => {
+    const agent = agents.find((a) => a.id === agentId);
+    setCreateForm((prev) => ({
+      ...prev,
+      agentId,
+      specialty: agent?.specialty ?? prev.specialty,
+      hourlyRate: agent?.hourlyRate ?? prev.hourlyRate,
+    }));
+  };
+
+  const addMilestone = () => {
+    setCreateMilestones((prev) => [...prev, { title: '', description: '', dueDate: '', amount: 0 }]);
+  };
+
+  const updateMilestone = (idx: number, field: string, value: any) => {
+    setCreateMilestones((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
+  };
+
+  const removeMilestone = (idx: number) => {
+    setCreateMilestones((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const deleteContract = async (id: string) => {
+    if (!confirm('Delete this contract? This action cannot be undone.')) return;
+    try {
+      await api.deleteContract(id);
+      load();
+    } catch (err: any) {
+      setActionError(err.message ?? 'Failed to delete contract');
+    }
+  };
 
   const sendMessage = async (contractId: string) => {
     if (!message.trim()) return;
@@ -172,8 +289,52 @@ export function ContractsPage() {
           <button onClick={() => setActionError('')} className="ml-4 text-xs underline">Dismiss</button>
         </div>
       )}
+
+      {/* ── Monitoring Stats ── */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Hash className="h-3 w-3" /> Total</div>
+            <p className="text-2xl font-bold">{stats.total}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Play className="h-3 w-3 text-green-500" /> Active</div>
+            <p className="text-2xl font-bold text-green-500">{stats.byStatus.active || 0}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Clock className="h-3 w-3 text-yellow-500" /> Pending</div>
+            <p className="text-2xl font-bold text-yellow-500">{stats.byStatus.pending || 0}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted"><DollarSign className="h-3 w-3 text-accent" /> Total Cost</div>
+            <p className="text-2xl font-bold">${stats.totalCost.toLocaleString()}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Timer className="h-3 w-3" /> Hours Logged</div>
+            <p className="text-2xl font-bold">{stats.totalHours.toLocaleString()}h</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Star className="h-3 w-3 text-yellow-500" /> Avg Rating</div>
+            <p className="text-2xl font-bold">{stats.avgRating ?? '—'}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header with Create button ── */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Briefcase className="h-5 w-5" /> Contracts
+        </h2>
+        <button
+          onClick={openCreate}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/90"
+        >
+          <Plus className="h-4 w-4" /> New Contract
+        </button>
+      </div>
+
       {/* Summary pills */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {['active', 'pending', 'paused', 'review', 'completed', 'cancelled'].map((s) => {
           const style = statusStyles[s];
           const Icon = style?.icon ?? Clock;
@@ -192,6 +353,20 @@ export function ContractsPage() {
             </button>
           );
         })}
+
+        {/* Department filter */}
+        {departments.length > 0 && (
+          <select
+            value={deptFilter}
+            onChange={(e) => setDeptFilter(e.target.value)}
+            className="ml-auto rounded-lg border border-border bg-input px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            <option value="">All Departments</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Contracts list */}
@@ -220,6 +395,9 @@ export function ContractsPage() {
                   <h3 className="font-semibold truncate">{c.title}</h3>
                   <p className="text-xs text-muted">
                     Agent: {c.agentName ?? c.agentId} &middot; {c.specialty}
+                    {c.departmentName && (
+                      <> &middot; <Building2 className="inline h-3 w-3" /> {c.departmentName}</>                    
+                    )}
                   </p>
                 </div>
 
@@ -253,6 +431,29 @@ export function ContractsPage() {
                   {/* Description */}
                   <p className="text-sm text-muted">{c.description}</p>
 
+                  {/* Department assignment */}
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-muted" />
+                    <span className="text-xs font-medium text-muted">Department:</span>
+                    <select
+                      value={c.departmentId ?? ''}
+                      onChange={async (e) => {
+                        try {
+                          await api.updateContract(c.id, { departmentId: e.target.value || null });
+                          load();
+                        } catch (err: any) {
+                          setActionError(err.message ?? 'Failed to update department');
+                        }
+                      }}
+                      className="rounded-lg border border-border bg-input px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-accent/40"
+                    >
+                      <option value="">Unassigned</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Action buttons */}
                   {(c.status === 'active' || c.status === 'paused') && (
                     <div className="flex flex-wrap gap-2">
@@ -285,6 +486,18 @@ export function ContractsPage() {
                         className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
                       >
                         <XCircle className="h-3 w-3" /> Cancel
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Delete button for inactive contracts */}
+                  {(c.status === 'pending' || c.status === 'completed' || c.status === 'cancelled') && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => deleteContract(c.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
+                      >
+                        <Trash2 className="h-3 w-3" /> Delete
                       </button>
                     </div>
                   )}
@@ -458,6 +671,166 @@ export function ContractsPage() {
               </button>
               <button
                 onClick={() => setCompleteModal(null)}
+                className="rounded-lg px-4 py-2 text-sm text-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create Contract Modal ── */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Plus className="h-5 w-5" /> Create New Contract
+              </h2>
+              <button onClick={() => setShowCreate(false)} className="text-muted hover:text-foreground">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* Title */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Title *</label>
+                <input
+                  value={createForm.title}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, title: e.target.value }))}
+                  placeholder="Contract title..."
+                  className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40"
+                />
+              </div>
+
+              {/* Agent */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Agent *</label>
+                <select
+                  value={createForm.agentId}
+                  onChange={(e) => handleAgentSelect(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/40"
+                >
+                  <option value="">Select an agent...</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} — {a.specialty} (${a.hourlyRate}/h)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Department */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Department</label>
+                <select
+                  value={createForm.departmentId}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, departmentId: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/40"
+                >
+                  <option value="">No department</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Description */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Description</label>
+                <textarea
+                  rows={3}
+                  value={createForm.description}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="What work needs to be done?"
+                  className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 resize-none"
+                />
+              </div>
+
+              {/* Rate & Hours */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Hourly Rate ($)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={createForm.hourlyRate || ''}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, hourlyRate: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/40"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Estimated Hours</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={createForm.estimatedHours || ''}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, estimatedHours: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/40"
+                  />
+                </div>
+              </div>
+
+              {/* Milestones */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium flex items-center gap-1">
+                    <Milestone className="h-4 w-4" /> Milestones
+                  </label>
+                  <button
+                    onClick={addMilestone}
+                    className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                  >
+                    <Plus className="h-3 w-3" /> Add
+                  </button>
+                </div>
+                {createMilestones.map((m, idx) => (
+                  <div key={idx} className="rounded-lg border border-border p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={m.title}
+                        onChange={(e) => updateMilestone(idx, 'title', e.target.value)}
+                        placeholder="Milestone title"
+                        className="flex-1 rounded-lg border border-border bg-input px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      />
+                      <button onClick={() => removeMilestone(idx)} className="text-muted hover:text-destructive">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="date"
+                        value={m.dueDate}
+                        onChange={(e) => updateMilestone(idx, 'dueDate', e.target.value)}
+                        className="rounded-lg border border-border bg-input px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        placeholder="Amount ($)"
+                        value={m.amount || ''}
+                        onChange={(e) => updateMilestone(idx, 'amount', Number(e.target.value))}
+                        className="rounded-lg border border-border bg-input px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={handleCreate}
+                disabled={createLoading}
+                className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/90 disabled:opacity-50"
+              >
+                {createLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Create Contract
+              </button>
+              <button
+                onClick={() => setShowCreate(false)}
                 className="rounded-lg px-4 py-2 text-sm text-muted hover:text-foreground"
               >
                 Cancel
